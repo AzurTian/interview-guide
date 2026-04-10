@@ -1,11 +1,11 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.ai.AiTextClient;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.knowledgebase.model.QueryRequest;
 import interview.guide.modules.knowledgebase.model.QueryResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,7 +37,7 @@ public class KnowledgeBaseQueryService {
     private static final Pattern SHORT_TOKEN_PATTERN = Pattern.compile("^[\\p{L}\\p{N}_-]{2,20}$");
     private static final int STREAM_PROBE_CHARS = 120;
 
-    private final ChatClient chatClient;
+    private final AiTextClient aiTextClient;
     private final KnowledgeBaseVectorService vectorService;
     private final KnowledgeBaseListService listService;
     private final KnowledgeBaseCountService countService;
@@ -53,7 +53,7 @@ public class KnowledgeBaseQueryService {
     private final double minScoreDefault;
 
     public KnowledgeBaseQueryService(
-            ChatClient.Builder chatClientBuilder,
+            AiTextClient aiTextClient,
             KnowledgeBaseVectorService vectorService,
             KnowledgeBaseListService listService,
             KnowledgeBaseCountService countService,
@@ -67,7 +67,7 @@ public class KnowledgeBaseQueryService {
             @Value("${app.ai.rag.search.topk-long:8}") int topkLong,
             @Value("${app.ai.rag.search.min-score-short:0.18}") double minScoreShort,
             @Value("${app.ai.rag.search.min-score-default:0.28}") double minScoreDefault) throws IOException {
-        this.chatClient = chatClientBuilder.build();
+        this.aiTextClient = aiTextClient;
         this.vectorService = vectorService;
         this.listService = listService;
         this.countService = countService;
@@ -131,11 +131,7 @@ public class KnowledgeBaseQueryService {
 
         try {
             // 5. 调用AI生成回答
-            String answer = chatClient.prompt()
-                    .system(systemPrompt)
-                    .user(userPrompt)
-                    .call()
-                    .content();
+            String answer = aiTextClient.generateText(systemPrompt, userPrompt);
             answer = normalizeAnswer(answer);
 
             log.info("知识库问答完成: kbIds={}", knowledgeBaseIds);
@@ -217,11 +213,7 @@ public class KnowledgeBaseQueryService {
             String userPrompt = buildUserPrompt(context, question);
 
             // 5. 流式调用 + 探测窗口归一化：既保留流式速度，又避免无信息长文
-            Flux<String> responseFlux = chatClient.prompt()
-                    .system(systemPrompt)
-                    .user(userPrompt)
-                    .stream()
-                    .content();
+            Flux<String> responseFlux = aiTextClient.streamText(systemPrompt, userPrompt);
 
             log.info("开始流式输出知识库回答(探测窗口): kbIds={}", knowledgeBaseIds);
             return normalizeStreamOutput(responseFlux)
@@ -290,10 +282,7 @@ public class KnowledgeBaseQueryService {
             Map<String, Object> variables = new HashMap<>();
             variables.put("question", question);
             String rewritePrompt = rewritePromptTemplate.render(variables);
-            String rewritten = chatClient.prompt()
-                .user(rewritePrompt)
-                .call()
-                .content();
+            String rewritten = aiTextClient.generateText("", rewritePrompt);
             if (rewritten == null || rewritten.isBlank()) {
                 return question;
             }

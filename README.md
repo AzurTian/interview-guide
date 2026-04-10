@@ -204,6 +204,18 @@ AI_BAILIAN_API_KEY=your_api_key_here
 AI_MODEL=qwen-plus
 ```
 
+如果文本模型要切到只支持 `/v1/responses` 的供应商，额外配置：
+
+```env
+APP_AI_TEXT_PROVIDER=responses
+APP_AI_RESPONSES_BASE_URL=https://api.openai.com
+APP_AI_RESPONSES_PATH=/v1/responses
+AI_RESPONSES_API_KEY=your_responses_api_key_here
+APP_AI_RESPONSES_MODEL=gpt-5.4
+```
+
+说明：知识库 embedding 仍沿用 `AI_BAILIAN_API_KEY` 对应的 Spring AI OpenAI 兼容配置。
+
 #### 2. 启动所有服务
 
 ```bash
@@ -283,6 +295,11 @@ pnpm dev
 | --- | --- | --- |
 | `AI_BAILIAN_API_KEY` | 百炼 API Key，必填 | 无 |
 | `AI_MODEL` | 聊天模型名称 | `qwen-plus` |
+| `APP_AI_TEXT_PROVIDER` | 文本生成供应商，`spring-ai` 或 `responses` | `spring-ai` |
+| `APP_AI_RESPONSES_BASE_URL` | Responses API 根地址，例如 `https://icoe.pp.ua` | 空 |
+| `APP_AI_RESPONSES_PATH` | Responses API 路径 | `/v1/responses` |
+| `AI_RESPONSES_API_KEY` | Responses API Key | 空 |
+| `APP_AI_RESPONSES_MODEL` | Responses 模型名称 | 跟随 `AI_MODEL` |
 
 ### 常用可选配置
 

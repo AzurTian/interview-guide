@@ -3,7 +3,6 @@ package interview.guide.common.ai;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import org.slf4j.Logger;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -33,7 +32,7 @@ public class StructuredOutputInvoker {
     }
 
     public <T> T invoke(
-        ChatClient chatClient,
+        AiTextClient aiTextClient,
         String systemPromptWithFormat,
         String userPrompt,
         BeanOutputConverter<T> outputConverter,
@@ -48,14 +47,11 @@ public class StructuredOutputInvoker {
                 ? systemPromptWithFormat
                 : buildRetrySystemPrompt(systemPromptWithFormat, lastError);
             try {
-                return chatClient.prompt()
-                    .system(attemptSystemPrompt)
-                    .user(userPrompt)
-                    .call()
-                    .entity(outputConverter);
+                String rawText = aiTextClient.generateText(attemptSystemPrompt, userPrompt);
+                return outputConverter.convert(rawText);
             } catch (Exception e) {
                 lastError = e;
-                log.warn("{}结构化解析失败，准备重试: attempt={}, error={}", logContext, attempt, e.getMessage());
+                log.warn("{}结构化输出失败，准备重试: attempt={}, error={}", logContext, attempt, e.getMessage());
             }
         }
 
