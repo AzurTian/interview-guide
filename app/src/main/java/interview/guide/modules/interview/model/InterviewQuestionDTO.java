@@ -1,5 +1,7 @@
 package interview.guide.modules.interview.model;
 
+import java.util.List;
+
 /**
  * 面试问题DTO
  */
@@ -11,6 +13,8 @@ public record InterviewQuestionDTO(
     String userAnswer,    // 用户回答
     Integer score,        // 单题得分 (0-100)
     String feedback,      // 单题反馈
+    String referenceAnswer, // 参考答案
+    List<String> keyPoints, // 关键点
     boolean isFollowUp,   // 是否为追问
     Integer parentQuestionIndex // 追问关联的主问题索引
 ) {
@@ -29,7 +33,7 @@ public record InterviewQuestionDTO(
      * 创建新问题（未回答状态）
      */
     public static InterviewQuestionDTO create(int index, String question, QuestionType type, String category) {
-        return new InterviewQuestionDTO(index, question, type, category, null, null, null, false, null);
+        return new InterviewQuestionDTO(index, question, type, category, null, null, null, null, null, false, null);
     }
 
     /**
@@ -42,7 +46,7 @@ public record InterviewQuestionDTO(
             String category,
             boolean isFollowUp,
             Integer parentQuestionIndex) {
-        return new InterviewQuestionDTO(index, question, type, category, null, null, null, isFollowUp, parentQuestionIndex);
+        return new InterviewQuestionDTO(index, question, type, category, null, null, null, null, null, isFollowUp, parentQuestionIndex);
     }
     
     /**
@@ -50,14 +54,55 @@ public record InterviewQuestionDTO(
      */
     public InterviewQuestionDTO withAnswer(String answer) {
         return new InterviewQuestionDTO(
-            questionIndex, question, type, category, answer, score, feedback, isFollowUp, parentQuestionIndex);
+            questionIndex,
+            question,
+            type,
+            category,
+            answer,
+            score,
+            feedback,
+            referenceAnswer,
+            keyPoints,
+            isFollowUp,
+            parentQuestionIndex
+        );
+    }
+
+    /**
+     * 更新用户回答并清理旧评估结果
+     */
+    public InterviewQuestionDTO withUpdatedAnswer(String answer) {
+        return new InterviewQuestionDTO(
+            questionIndex,
+            question,
+            type,
+            category,
+            answer,
+            null,
+            null,
+            null,
+            null,
+            isFollowUp,
+            parentQuestionIndex
+        );
     }
     
     /**
      * 添加评分和反馈
      */
-    public InterviewQuestionDTO withEvaluation(int score, String feedback) {
+    public InterviewQuestionDTO withEvaluation(int score, String feedback, String referenceAnswer, List<String> keyPoints) {
         return new InterviewQuestionDTO(
-            questionIndex, question, type, category, userAnswer, score, feedback, isFollowUp, parentQuestionIndex);
+            questionIndex,
+            question,
+            type,
+            category,
+            userAnswer,
+            score,
+            feedback,
+            referenceAnswer,
+            keyPoints,
+            isFollowUp,
+            parentQuestionIndex
+        );
     }
 }

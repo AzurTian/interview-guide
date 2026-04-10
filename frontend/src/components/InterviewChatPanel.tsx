@@ -1,7 +1,7 @@
 import {useMemo, useRef} from 'react';
 import {motion} from 'framer-motion';
 import {Virtuoso, type VirtuosoHandle} from 'react-virtuoso';
-import type {InterviewQuestion, InterviewSession} from '../types/interview';
+import type {InterviewQuestion, InterviewSession, QuestionGenerationStatus} from '../types/interview';
 import {Send, User} from 'lucide-react';
 
 interface Message {
@@ -14,6 +14,11 @@ interface Message {
 interface InterviewChatPanelProps {
   session: InterviewSession;
   currentQuestion: InterviewQuestion | null;
+  currentQuestionIndex: number;
+  waitingForNextQuestion: boolean;
+  isEvaluating: boolean;
+  questionGenerationStatus: QuestionGenerationStatus;
+  questionGenerationError: string | null;
   messages: Message[];
   answer: string;
   onAnswerChange: (answer: string) => void;
@@ -30,6 +35,11 @@ interface InterviewChatPanelProps {
 export default function InterviewChatPanel({
   session,
   currentQuestion,
+  currentQuestionIndex,
+  waitingForNextQuestion,
+  isEvaluating,
+  questionGenerationStatus,
+  questionGenerationError,
   messages,
   answer,
   onAnswerChange,
@@ -40,14 +50,24 @@ export default function InterviewChatPanel({
   onShowCompleteConfirm
 }: InterviewChatPanelProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const showQuestionGenerationNotice = !isEvaluating
+    && (waitingForNextQuestion
+      || (!currentQuestion
+        && questionGenerationStatus !== 'FAILED'
+        && currentQuestionIndex < session.totalQuestions));
 
   const progress = useMemo(() => {
-    if (!session || !currentQuestion) return 0;
-    return ((currentQuestion.questionIndex + 1) / session.totalQuestions) * 100;
-  }, [session, currentQuestion]);
+    if (!session || session.totalQuestions === 0) return 0;
+    const progressIndex = currentQuestion ? currentQuestion.questionIndex + 1 : Math.min(currentQuestionIndex, session.totalQuestions);
+    return (progressIndex / session.totalQuestions) * 100;
+  }, [session, currentQuestion, currentQuestionIndex]);
+
+  const activeQuestionNumber = currentQuestion
+    ? currentQuestion.questionIndex + 1
+    : Math.min(currentQuestionIndex + 1, session.totalQuestions);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && currentQuestion && !waitingForNextQuestion && !isEvaluating) {
       onSubmit();
     }
   };
@@ -59,7 +79,7 @@ export default function InterviewChatPanel({
             className="bg-white dark:bg-slate-800 rounded-2xl p-6 mb-4 shadow-sm dark:shadow-slate-900/50 border border-slate-100 dark:border-slate-700">
         <div className="flex items-center justify-between mb-3">
           <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-            题目 {currentQuestion ? currentQuestion.questionIndex + 1 : 0} / {session.totalQuestions}
+            题目 {session.totalQuestions > 0 ? activeQuestionNumber : 0} / {session.totalQuestions}
           </span>
             <span className="text-sm text-slate-500 dark:text-slate-400">
             {Math.round(progress)}%
@@ -91,6 +111,36 @@ export default function InterviewChatPanel({
           )}
         />
 
+        {isEvaluating && (
+          <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-600 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 flex items-center gap-3">
+            <motion.div
+              className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            />
+            <span className="text-sm">正在评估面试结果中，请稍后。</span>
+          </div>
+        )}
+
+        {showQuestionGenerationNotice && (
+          <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-600 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 flex items-center gap-3">
+            <motion.div
+              className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            />
+            <span className="text-sm">
+              {currentQuestionIndex === 0 ? '正在生成首题...' : '下一题生成中，请稍候。'}
+            </span>
+          </div>
+        )}
+
+        {questionGenerationStatus === 'FAILED' && !currentQuestion && (
+          <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-600 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 text-sm">
+            {questionGenerationError || '题目生成失败，请返回重试。'}
+          </div>
+        )}
+
         {/* 输入区域 */}
             <div className="border-t border-slate-200 dark:border-slate-600 p-4 bg-slate-50 dark:bg-slate-700/50">
           <div className="flex gap-3">
@@ -98,27 +148,35 @@ export default function InterviewChatPanel({
               value={answer}
               onChange={(e) => onAnswerChange(e.target.value)}
               onKeyDown={handleKeyPress}
-              placeholder="输入你的回答... (Ctrl/Cmd + Enter 提交)"
+              placeholder={
+                currentQuestion
+                  ? '输入你的回答... (Ctrl/Cmd + Enter 提交)'
+                  : isEvaluating
+                    ? '正在评估面试结果中，请稍后...'
+                  : questionGenerationStatus === 'FAILED'
+                    ? '题目生成失败'
+                    : '请等待题目生成...'
+              }
               className="flex-1 px-4 py-3 border border-slate-300 dark:border-slate-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
               rows={3}
-              disabled={isSubmitting}
+              disabled={isSubmitting || isEvaluating || waitingForNextQuestion || !currentQuestion}
             />
             <div className="flex flex-col gap-2">
               <motion.button
                 onClick={onSubmit}
-                disabled={!answer.trim() || isSubmitting}
+                disabled={!answer.trim() || isSubmitting || isEvaluating || waitingForNextQuestion || !currentQuestion}
                 className="px-6 py-3 bg-primary-500 text-white rounded-xl font-medium hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                whileHover={{ scale: isSubmitting || !answer.trim() ? 1 : 1.02 }}
-                whileTap={{ scale: isSubmitting || !answer.trim() ? 1 : 0.98 }}
+                whileHover={{ scale: isSubmitting || isEvaluating || !answer.trim() || waitingForNextQuestion || !currentQuestion ? 1 : 1.02 }}
+                whileTap={{ scale: isSubmitting || isEvaluating || !answer.trim() || waitingForNextQuestion || !currentQuestion ? 1 : 0.98 }}
               >
-                {isSubmitting ? (
+                {isSubmitting || isEvaluating ? (
                   <>
                     <motion.div
                       className="w-4 h-4 border-2 border-white border-t-transparent rounded-full"
                       animate={{ rotate: 360 }}
                       transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                     />
-                    提交中
+                    {isEvaluating ? '评估中' : '提交中'}
                   </>
                 ) : (
                   <>
@@ -127,15 +185,17 @@ export default function InterviewChatPanel({
                   </>
                 )}
               </motion.button>
-              <motion.button
-                onClick={() => onShowCompleteConfirm(true)}
-                disabled={isSubmitting}
-                className="px-6 py-3 bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl font-medium hover:bg-slate-300 dark:hover:bg-slate-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                whileHover={{ scale: isSubmitting ? 1 : 1.02 }}
-                whileTap={{ scale: isSubmitting ? 1 : 0.98 }}
-              >
-                提前交卷
-              </motion.button>
+              {!isEvaluating && (
+                <motion.button
+                  onClick={() => onShowCompleteConfirm(true)}
+                  disabled={isSubmitting}
+                  className="px-6 py-3 bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-xl font-medium hover:bg-slate-300 dark:hover:bg-slate-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  whileHover={{ scale: isSubmitting ? 1 : 1.02 }}
+                  whileTap={{ scale: isSubmitting ? 1 : 0.98 }}
+                >
+                  提前交卷
+                </motion.button>
+              )}
             </div>
           </div>
         </div>

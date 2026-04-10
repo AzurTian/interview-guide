@@ -1,10 +1,14 @@
-import {useEffect, useState} from 'react';
-import {AnimatePresence, motion} from 'framer-motion';
-import {interviewApi} from '../api/interview';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { historyApi } from '../api/history';
+import { interviewApi } from '../api/interview';
 import ConfirmDialog from '../components/ConfirmDialog';
 import InterviewConfigPanel from '../components/InterviewConfigPanel';
 import InterviewChatPanel from '../components/InterviewChatPanel';
-import type {InterviewQuestion, InterviewSession} from '../types/interview';
+import type {
+  InterviewQuestion,
+  InterviewSession,
+} from '../types/interview';
 
 type InterviewStage = 'config' | 'interview';
 
@@ -22,11 +26,37 @@ interface InterviewProps {
   onInterviewComplete: () => void;
 }
 
+function sortQuestions(questions: InterviewQuestion[]): InterviewQuestion[] {
+  return [...questions].sort((left, right) => left.questionIndex - right.questionIndex);
+}
+
+function mergeQuestions(existing: InterviewQuestion[], incoming: InterviewQuestion[]): InterviewQuestion[] {
+  const questionMap = new Map<number, InterviewQuestion>();
+  for (const question of existing) {
+    questionMap.set(question.questionIndex, question);
+  }
+  for (const question of incoming) {
+    questionMap.set(question.questionIndex, {
+      ...questionMap.get(question.questionIndex),
+      ...question,
+    });
+  }
+  return sortQuestions(Array.from(questionMap.values()));
+}
+
+function shouldSubscribeQuestionStream(session: InterviewSession | null): boolean {
+  if (!session) {
+    return false;
+  }
+  return session.questionGenerationStatus === 'PENDING' || session.questionGenerationStatus === 'PROCESSING';
+}
+
 export default function Interview({ resumeText, resumeId, onBack, onInterviewComplete }: InterviewProps) {
   const [stage, setStage] = useState<InterviewStage>('config');
   const [questionCount, setQuestionCount] = useState(8);
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState<InterviewQuestion | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [messages, setMessages] = useState<Message[]>([]);
   const [answer, setAnswer] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -36,213 +66,428 @@ export default function Interview({ resumeText, resumeId, onBack, onInterviewCom
   const [unfinishedSession, setUnfinishedSession] = useState<InterviewSession | null>(null);
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
   const [forceCreateNew, setForceCreateNew] = useState(false);
+  const [waitingForNextQuestion, setWaitingForNextQuestion] = useState(false);
+  const [isEvaluating, setIsEvaluating] = useState(false);
 
-  // 检查是否有未完成的面试（组件挂载时和resumeId变化时）
-  useEffect(() => {
-    if (resumeId) {
-      checkUnfinishedSession();
+  const sessionRef = useRef<InterviewSession | null>(null);
+  const currentQuestionRef = useRef<InterviewQuestion | null>(null);
+  const displayedQuestionIndicesRef = useRef<Set<number>>(new Set());
+  const streamCleanupRef = useRef<(() => void) | null>(null);
+  const evaluationPollingRef = useRef<number | null>(null);
+
+  const stopQuestionStream = useCallback(() => {
+    streamCleanupRef.current?.();
+    streamCleanupRef.current = null;
+  }, []);
+
+  const stopEvaluationPolling = useCallback(() => {
+    if (evaluationPollingRef.current !== null) {
+      window.clearInterval(evaluationPollingRef.current);
+      evaluationPollingRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resumeId]);
+  }, []);
 
-  const checkUnfinishedSession = async () => {
-    if (!resumeId) return;
+  const beginEvaluation = useCallback((sessionId: string) => {
+    stopQuestionStream();
+    stopEvaluationPolling();
+    setWaitingForNextQuestion(false);
+    setIsEvaluating(true);
 
-    setCheckingUnfinished(true);
-    try {
-      const foundSession = await interviewApi.findUnfinishedSession(resumeId);
-      if (foundSession) {
-        setUnfinishedSession(foundSession);
+    const checkEvaluationStatus = async () => {
+      try {
+        const detail = await historyApi.getInterviewDetail(sessionId);
+        if (detail.evaluateStatus === 'COMPLETED' || detail.evaluateStatus === 'FAILED') {
+          stopEvaluationPolling();
+          onInterviewComplete();
+        }
+      } catch (requestError) {
+        console.error('查询面试评估状态失败', requestError);
       }
-    } catch (err) {
-      console.error('检查未完成面试失败', err);
-    } finally {
-      setCheckingUnfinished(false);
+    };
+
+    evaluationPollingRef.current = window.setInterval(() => {
+      void checkEvaluationStatus();
+    }, 3000);
+    void checkEvaluationStatus();
+  }, [onInterviewComplete, stopEvaluationPolling, stopQuestionStream]);
+
+  const appendQuestionMessage = useCallback((question: InterviewQuestion) => {
+    if (displayedQuestionIndicesRef.current.has(question.questionIndex)) {
+      return;
     }
-  };
+    displayedQuestionIndicesRef.current.add(question.questionIndex);
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: 'interviewer',
+        content: question.question,
+        category: question.category,
+        questionIndex: question.questionIndex,
+      },
+    ]);
+  }, []);
 
-  const handleContinueUnfinished = () => {
-    if (!unfinishedSession) return;
-    setForceCreateNew(false);  // 重置强制创建标志
-    restoreSession(unfinishedSession);
-    setUnfinishedSession(null);
-  };
+  const syncCurrentQuestion = useCallback((nextSession: InterviewSession | null) => {
+    if (!nextSession) {
+      currentQuestionRef.current = null;
+      setCurrentQuestion(null);
+      setCurrentQuestionIndex(0);
+      setWaitingForNextQuestion(false);
+      return;
+    }
 
-    const handleStartNew = () => {
-    setUnfinishedSession(null);
-    setForceCreateNew(true);  // 标记需要强制创建新会话
-  };
+    const nextQuestion = nextSession.questions.find(
+      (question) => question.questionIndex === nextSession.currentQuestionIndex
+    ) ?? null;
 
-    const restoreSession = (sessionToRestore: InterviewSession) => {
-    setSession(sessionToRestore);
+    currentQuestionRef.current = nextQuestion;
+    setCurrentQuestion(nextQuestion);
+    setCurrentQuestionIndex(nextSession.currentQuestionIndex);
 
-        // 恢复当前问题
-    const currentQ = sessionToRestore.questions[sessionToRestore.currentQuestionIndex];
-    if (currentQ) {
-      setCurrentQuestion(currentQ);
+    const waiting = !nextQuestion
+      && nextSession.currentQuestionIndex < nextSession.totalQuestions
+      && nextSession.questionGenerationStatus !== 'FAILED';
+    setWaitingForNextQuestion(waiting);
 
-        // 如果当前问题已有答案，显示在输入框中
-      if (currentQ.userAnswer) {
-        setAnswer(currentQ.userAnswer);
-      }
+    if (nextQuestion) {
+      appendQuestionMessage(nextQuestion);
+    }
+  }, [appendQuestionMessage]);
 
-        // 恢复消息历史
-      const restoredMessages: Message[] = [];
-      for (let i = 0; i <= sessionToRestore.currentQuestionIndex; i++) {
-        const q = sessionToRestore.questions[i];
-        restoredMessages.push({
-          type: 'interviewer',
-          content: q.question,
-          category: q.category,
-          questionIndex: i
-        });
-        if (q.userAnswer) {
-          restoredMessages.push({
-            type: 'user',
-            content: q.userAnswer
+  const commitSession = useCallback((nextSession: InterviewSession | null) => {
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    syncCurrentQuestion(nextSession);
+  }, [syncCurrentQuestion]);
+
+  const subscribeQuestionStream = useCallback((sessionId: string) => {
+    stopQuestionStream();
+    streamCleanupRef.current = interviewApi.subscribeQuestionStream(
+      sessionId,
+      (event) => {
+        const currentSession = sessionRef.current;
+        if (event.type === 'snapshot' && event.session) {
+          const snapshotSession: InterviewSession = {
+            ...event.session,
+            questions: mergeQuestions(currentSession?.questions ?? [], event.session.questions ?? []),
+          };
+          commitSession(snapshotSession);
+          return;
+        }
+
+        if (!currentSession) {
+          return;
+        }
+
+        if (event.type === 'question' && event.question) {
+          commitSession({
+            ...currentSession,
+            questions: mergeQuestions(currentSession.questions, [event.question]),
+            generatedQuestionCount: event.generatedQuestionCount ?? currentSession.generatedQuestionCount,
+            totalQuestions: event.totalQuestions ?? currentSession.totalQuestions,
+            questionGenerationStatus: event.questionGenerationStatus ?? currentSession.questionGenerationStatus,
           });
+          return;
+        }
+
+        if (event.type === 'completed') {
+          commitSession({
+            ...currentSession,
+            generatedQuestionCount: event.generatedQuestionCount ?? currentSession.generatedQuestionCount,
+            totalQuestions: event.totalQuestions ?? currentSession.totalQuestions,
+            questionGenerationStatus: 'COMPLETED',
+            questionGenerationError: null,
+          });
+          return;
+        }
+
+        if (event.type === 'error') {
+          const generationError = event.error ?? '题目生成失败，请重试。';
+          commitSession({
+            ...currentSession,
+            questionGenerationStatus: 'FAILED',
+            questionGenerationError: generationError,
+          });
+          setError(generationError);
+        }
+      },
+      () => {
+        streamCleanupRef.current = null;
+      },
+      (streamError) => {
+        const currentSession = sessionRef.current;
+        if (currentSession && currentSession.questionGenerationStatus !== 'COMPLETED') {
+          commitSession({
+            ...currentSession,
+            questionGenerationStatus: 'FAILED',
+            questionGenerationError: streamError.message,
+          });
+          setError(streamError.message);
         }
       }
-      setMessages(restoredMessages);
+    );
+  }, [commitSession, stopQuestionStream]);
+
+  const resetConversationState = useCallback(() => {
+    displayedQuestionIndicesRef.current = new Set();
+    setMessages([]);
+    setAnswer('');
+    setError('');
+    setWaitingForNextQuestion(false);
+    setIsEvaluating(false);
+    setCurrentQuestion(null);
+    setCurrentQuestionIndex(0);
+  }, []);
+
+  const restoreSession = useCallback((sessionToRestore: InterviewSession) => {
+    stopQuestionStream();
+    stopEvaluationPolling();
+
+    const restoredSession: InterviewSession = {
+      ...sessionToRestore,
+      questions: sortQuestions(sessionToRestore.questions),
+    };
+
+    const restoredMessages: Message[] = [];
+    const displayedIndices = new Set<number>();
+    for (const question of restoredSession.questions) {
+      if (question.questionIndex > restoredSession.currentQuestionIndex) {
+        continue;
+      }
+      displayedIndices.add(question.questionIndex);
+      restoredMessages.push({
+        type: 'interviewer',
+        content: question.question,
+        category: question.category,
+        questionIndex: question.questionIndex,
+      });
+      if (question.userAnswer) {
+        restoredMessages.push({
+          type: 'user',
+          content: question.userAnswer,
+        });
+      }
     }
 
-        setStage('interview');
+    displayedQuestionIndicesRef.current = displayedIndices;
+    setMessages(restoredMessages);
+    const currentDraft = restoredSession.questions.find(
+      (question) => question.questionIndex === restoredSession.currentQuestionIndex
+    );
+    setAnswer(currentDraft?.userAnswer ?? '');
+    setIsEvaluating(false);
+    commitSession(restoredSession);
+    setStage('interview');
+
+    if (shouldSubscribeQuestionStream(restoredSession)) {
+      subscribeQuestionStream(restoredSession.sessionId);
+    }
+  }, [commitSession, stopEvaluationPolling, stopQuestionStream, subscribeQuestionStream]);
+
+  useEffect(() => {
+    if (!resumeId) {
+      return;
+    }
+
+    const checkUnfinishedSession = async () => {
+      setCheckingUnfinished(true);
+      try {
+        const foundSession = await interviewApi.findUnfinishedSession(resumeId);
+        if (foundSession) {
+          setUnfinishedSession(foundSession);
+        }
+      } catch (requestError) {
+        console.error('检查未完成面试失败', requestError);
+      } finally {
+        setCheckingUnfinished(false);
+      }
+    };
+
+    void checkUnfinishedSession();
+  }, [resumeId]);
+
+  useEffect(() => {
+    return () => {
+      stopQuestionStream();
+      stopEvaluationPolling();
+    };
+  }, [stopEvaluationPolling, stopQuestionStream]);
+
+  const handleContinueUnfinished = () => {
+    if (!unfinishedSession) {
+      return;
+    }
+    setForceCreateNew(false);
+    setUnfinishedSession(null);
+    restoreSession(unfinishedSession);
   };
 
-    const startInterview = async () => {
+  const handleStartNew = () => {
+    setUnfinishedSession(null);
+    setForceCreateNew(true);
+  };
+
+  const startInterview = async () => {
     setIsCreating(true);
     setError('');
+    stopQuestionStream();
+    stopEvaluationPolling();
+    resetConversationState();
 
-        try {
-      // 创建新面试（如果 forceCreateNew 为 true，则强制创建新会话）
+    try {
       const newSession = await interviewApi.createSession({
         resumeText,
         questionCount,
         resumeId,
-        forceCreate: forceCreateNew
+        forceCreate: forceCreateNew,
       });
 
-            // 重置强制创建标志
       setForceCreateNew(false);
 
-            // 如果返回的是未完成的会话（currentQuestionIndex > 0 或已有答案），恢复它
-            const hasProgress = newSession.currentQuestionIndex > 0 ||
-                          newSession.questions.some(q => q.userAnswer) ||
-                          newSession.status === 'IN_PROGRESS';
+      const hasProgress = newSession.currentQuestionIndex > 0
+        || newSession.questions.some((question) => !!question.userAnswer)
+        || newSession.status === 'IN_PROGRESS';
 
-            if (hasProgress) {
-        // 这是恢复的会话
+      if (hasProgress) {
         restoreSession(newSession);
-      } else {
-        // 全新的会话
-        setSession(newSession);
-
-                if (newSession.questions.length > 0) {
-          const firstQuestion = newSession.questions[0];
-          setCurrentQuestion(firstQuestion);
-          setMessages([{
-            type: 'interviewer',
-            content: firstQuestion.question,
-            category: firstQuestion.category,
-            questionIndex: 0
-          }]);
-        }
-
-                setStage('interview');
+        return;
       }
-    } catch (err) {
+
+      const initialSession: InterviewSession = {
+        ...newSession,
+        questions: sortQuestions(newSession.questions),
+      };
+
+      displayedQuestionIndicesRef.current = new Set();
+      commitSession(initialSession);
+      setStage('interview');
+
+      if (shouldSubscribeQuestionStream(initialSession)) {
+        subscribeQuestionStream(initialSession.sessionId);
+      }
+    } catch (requestError) {
       setError('创建面试失败，请重试');
-      console.error(err);
-      setForceCreateNew(false);  // 出错时也重置标志
+      console.error(requestError);
+      setForceCreateNew(false);
     } finally {
       setIsCreating(false);
     }
   };
 
-    const handleSubmitAnswer = async () => {
-    if (!answer.trim() || !session || !currentQuestion) return;
+  const handleSubmitAnswer = async () => {
+    const activeSession = sessionRef.current;
+    const activeQuestion = currentQuestionRef.current;
+    if (!answer.trim() || !activeSession || !activeQuestion) {
+      return;
+    }
 
     setIsSubmitting(true);
+    setError('');
 
-    const userMessage: Message = {
-      type: 'user',
-      content: answer
-    };
-    setMessages(prev => [...prev, userMessage]);
+    const submittedAnswer = answer.trim();
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: 'user',
+        content: submittedAnswer,
+      },
+    ]);
 
     try {
       const response = await interviewApi.submitAnswer({
-        sessionId: session.sessionId,
-        questionIndex: currentQuestion.questionIndex,
-        answer: answer.trim()
+        sessionId: activeSession.sessionId,
+        questionIndex: activeQuestion.questionIndex,
+        answer: submittedAnswer,
       });
 
       setAnswer('');
 
-      if (response.hasNextQuestion && response.nextQuestion) {
-        setCurrentQuestion(response.nextQuestion);
-        setMessages(prev => [...prev, {
-          type: 'interviewer',
-          content: response.nextQuestion!.question,
-          category: response.nextQuestion!.category,
-          questionIndex: response.nextQuestion!.questionIndex
-        }]);
+      const latestSession = sessionRef.current ?? activeSession;
+      const updatedQuestions = mergeQuestions(
+        latestSession.questions.map((question) => (
+          question.questionIndex === activeQuestion.questionIndex
+            ? { ...question, userAnswer: submittedAnswer }
+            : question
+        )),
+        response.nextQuestion ? [response.nextQuestion] : []
+      );
+
+      const updatedSession: InterviewSession = {
+        ...latestSession,
+        questions: updatedQuestions,
+        currentQuestionIndex: response.currentIndex,
+        status: response.completed ? 'COMPLETED' : 'IN_PROGRESS',
+      };
+
+      commitSession(updatedSession);
+
+      if (response.completed) {
+        beginEvaluation(activeSession.sessionId);
       } else {
-        // 面试已完成，评估将在后台进行，跳转到面试记录页
-        onInterviewComplete();
+        setWaitingForNextQuestion(response.waitingForNextQuestion);
       }
-    } catch (err) {
+    } catch (requestError) {
       setError('提交答案失败，请重试');
-      console.error(err);
+      console.error(requestError);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleCompleteEarly = async () => {
-    if (!session) return;
+    const activeSession = sessionRef.current;
+    if (!activeSession) {
+      return;
+    }
 
     setIsSubmitting(true);
     try {
-      await interviewApi.completeInterview(session.sessionId);
+      await interviewApi.completeInterview(activeSession.sessionId);
       setShowCompleteConfirm(false);
-      // 面试已完成，评估将在后台进行，跳转到面试记录页
-      onInterviewComplete();
-    } catch (err) {
+      commitSession({
+        ...activeSession,
+        currentQuestionIndex: activeSession.totalQuestions,
+        status: 'COMPLETED',
+      });
+      beginEvaluation(activeSession.sessionId);
+    } catch (requestError) {
       setError('提前交卷失败，请重试');
-      console.error(err);
+      console.error(requestError);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-    // 配置界面
-  const renderConfig = () => {
-    return (
-      <InterviewConfigPanel
-        questionCount={questionCount}
-        onQuestionCountChange={setQuestionCount}
-        onStart={startInterview}
-        isCreating={isCreating}
-        checkingUnfinished={checkingUnfinished}
-        unfinishedSession={unfinishedSession}
-        onContinueUnfinished={handleContinueUnfinished}
-        onStartNew={handleStartNew}
-        resumeText={resumeText}
-        onBack={onBack}
-        error={error}
-      />
-    );
-  };
+  const renderConfig = () => (
+    <InterviewConfigPanel
+      questionCount={questionCount}
+      onQuestionCountChange={setQuestionCount}
+      onStart={startInterview}
+      isCreating={isCreating}
+      checkingUnfinished={checkingUnfinished}
+      unfinishedSession={unfinishedSession}
+      onContinueUnfinished={handleContinueUnfinished}
+      onStartNew={handleStartNew}
+      resumeText={resumeText}
+      onBack={onBack}
+      error={error}
+    />
+  );
 
-    // 面试对话界面
   const renderInterview = () => {
-    if (!session || !currentQuestion) return null;
+    if (!session) {
+      return null;
+    }
 
     return (
       <InterviewChatPanel
         session={session}
         currentQuestion={currentQuestion}
+        currentQuestionIndex={currentQuestionIndex}
+        waitingForNextQuestion={waitingForNextQuestion}
+        isEvaluating={isEvaluating}
+        questionGenerationStatus={session.questionGenerationStatus}
+        questionGenerationError={session.questionGenerationError}
         messages={messages}
         answer={answer}
         onAnswerChange={setAnswer}
@@ -257,32 +502,31 @@ export default function Interview({ resumeText, resumeId, onBack, onInterviewCom
 
   const stageSubtitles = {
     config: '配置您的面试参数',
-    interview: '认真回答每个问题，展示您的实力'
+    interview: '认真回答每个问题，展示您的实力',
   };
 
-    return (
+  return (
     <div className="pb-10">
-      {/* 页面头部 */}
-        <motion.div
+      <motion.div
         className="text-center mb-10"
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
-            <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2 flex items-center justify-center gap-3">
+        <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2 flex items-center justify-center gap-3">
           <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center">
             <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           模拟面试
         </h1>
-            <p className="text-slate-500 dark:text-slate-400">{stageSubtitles[stage]}</p>
+        <p className="text-slate-500 dark:text-slate-400">{stageSubtitles[stage]}</p>
       </motion.div>
 
-        <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence mode="wait" initial={false}>
         {stage === 'config' && (
           <motion.div
             key="config"
@@ -307,7 +551,6 @@ export default function Interview({ resumeText, resumeId, onBack, onInterviewCom
         )}
       </AnimatePresence>
 
-        {/* 提前交卷确认对话框 */}
       <ConfirmDialog
         open={showCompleteConfirm}
         title="提前交卷"

@@ -1,5 +1,7 @@
 package interview.guide.modules.interview.model;
 
+import interview.guide.common.model.AsyncTaskStatus;
+
 import java.util.List;
 
 /**
@@ -9,9 +11,12 @@ public record InterviewSessionDTO(
     String sessionId,
     String resumeText,
     int totalQuestions,
+    int generatedQuestionCount,
     int currentQuestionIndex,
     List<InterviewQuestionDTO> questions,
-    SessionStatus status
+    SessionStatus status,
+    AsyncTaskStatus questionGenerationStatus,
+    String questionGenerationError
 ) {
     public enum SessionStatus {
         CREATED,      // 会话已创建

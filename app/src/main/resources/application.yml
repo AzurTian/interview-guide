@@ -79,6 +79,10 @@ spring:
 
 # Application custom configuration
 app:
+  webmvc:
+    async:
+      pool-size: ${APP_WEBMVC_ASYNC_POOL_SIZE:8}
+      queue-capacity: ${APP_WEBMVC_ASYNC_QUEUE_CAPACITY:256}
   ai:
     text-provider: ${APP_AI_TEXT_PROVIDER:spring-ai}
     responses-base-url: ${APP_AI_RESPONSES_BASE_URL:}
@@ -102,6 +106,13 @@ app:
         min-score-default: ${APP_AI_RAG_MIN_SCORE_DEFAULT:0.28}
   interview:
     follow-up-count: ${APP_INTERVIEW_FOLLOW_UP_COUNT:1}
+    async:
+      question-generation:
+        pool-size: ${APP_INTERVIEW_QUESTION_GENERATION_POOL_SIZE:4}
+        queue-capacity: ${APP_INTERVIEW_QUESTION_GENERATION_QUEUE_CAPACITY:32}
+      answer-evaluation:
+        pool-size: ${APP_INTERVIEW_ANSWER_EVALUATION_POOL_SIZE:4}
+        queue-capacity: ${APP_INTERVIEW_ANSWER_EVALUATION_QUEUE_CAPACITY:64}
     evaluation:
       batch-size: ${APP_INTERVIEW_EVALUATION_BATCH_SIZE:8}
   resume:

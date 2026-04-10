@@ -192,7 +192,7 @@ export default function InterviewConfigPanel({
                     animate={{ rotate: 360 }}
                     transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                   />
-                  正在生成题目...
+                  正在创建会话...
                 </>
               ) : (
                 <>

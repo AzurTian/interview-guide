@@ -20,6 +20,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -41,9 +42,12 @@ public class InterviewPersistenceService {
      * 保存新的面试会话
      */
     @Transactional(rollbackFor = Exception.class)
-    public InterviewSessionEntity saveSession(String sessionId, Long resumeId, 
-                                              int totalQuestions, 
-                                              List<InterviewQuestionDTO> questions) {
+    public InterviewSessionEntity saveSession(String sessionId,
+                                              Long resumeId,
+                                              int totalQuestions,
+                                              List<InterviewQuestionDTO> questions,
+                                              AsyncTaskStatus questionGenerationStatus,
+                                              String questionGenerationError) {
         try {
             Optional<ResumeEntity> resumeOpt = resumeRepository.findById(resumeId);
             if (resumeOpt.isEmpty()) {
@@ -54,8 +58,11 @@ public class InterviewPersistenceService {
             session.setSessionId(sessionId);
             session.setResume(resumeOpt.get());
             session.setTotalQuestions(totalQuestions);
+            session.setGeneratedQuestionCount(questions.size());
             session.setCurrentQuestionIndex(0);
             session.setStatus(InterviewSessionEntity.SessionStatus.CREATED);
+            session.setQuestionGenerationStatus(questionGenerationStatus);
+            session.setQuestionGenerationError(questionGenerationError);
             session.setQuestionsJson(objectMapper.writeValueAsString(questions));
             
             InterviewSessionEntity saved = sessionRepository.save(session);
@@ -117,6 +124,45 @@ public class InterviewPersistenceService {
             sessionRepository.save(session);
         }
     }
+
+    /**
+     * 更新问题快照
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateQuestions(String sessionId, List<InterviewQuestionDTO> questions) {
+        Optional<InterviewSessionEntity> sessionOpt = sessionRepository.findBySessionId(sessionId);
+        if (sessionOpt.isEmpty()) {
+            return;
+        }
+        InterviewSessionEntity session = sessionOpt.get();
+        try {
+            session.setQuestionsJson(objectMapper.writeValueAsString(questions));
+            session.setGeneratedQuestionCount(questions.size());
+            sessionRepository.save(session);
+        } catch (JacksonException e) {
+            log.error("更新问题快照失败: sessionId={}", sessionId, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "更新面试问题失败");
+        }
+    }
+
+    /**
+     * 更新题目生成状态
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateQuestionGenerationState(String sessionId, AsyncTaskStatus status, String error) {
+        Optional<InterviewSessionEntity> sessionOpt = sessionRepository.findBySessionId(sessionId);
+        if (sessionOpt.isEmpty()) {
+            return;
+        }
+        InterviewSessionEntity session = sessionOpt.get();
+        session.setQuestionGenerationStatus(status);
+        if (error != null) {
+            session.setQuestionGenerationError(error.length() > 500 ? error.substring(0, 500) : error);
+        } else {
+            session.setQuestionGenerationError(null);
+        }
+        sessionRepository.save(session);
+    }
     
     /**
      * 保存面试答案
@@ -144,12 +190,62 @@ public class InterviewPersistenceService {
         answer.setUserAnswer(userAnswer);
         answer.setScore(score);
         answer.setFeedback(feedback);
+        answer.setReferenceAnswer(null);
+        answer.setKeyPointsJson(null);
 
         InterviewAnswerEntity saved = answerRepository.save(answer);
         log.info("面试答案已保存: sessionId={}, questionIndex={}, score={}", 
                 sessionId, questionIndex, score);
         
         return saved;
+    }
+
+    /**
+     * 更新单题评估结果
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateAnswerEvaluation(String sessionId,
+                                       int questionIndex,
+                                       String question,
+                                       String category,
+                                       String userAnswer,
+                                       int score,
+                                       String feedback,
+                                       String referenceAnswer,
+                                       List<String> keyPoints) {
+        Optional<InterviewSessionEntity> sessionOpt = sessionRepository.findBySessionId(sessionId);
+        if (sessionOpt.isEmpty()) {
+            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+        }
+
+        InterviewAnswerEntity answer = answerRepository
+            .findBySession_SessionIdAndQuestionIndex(sessionId, questionIndex)
+            .orElseGet(() -> {
+                InterviewAnswerEntity created = new InterviewAnswerEntity();
+                created.setSession(sessionOpt.get());
+                created.setQuestionIndex(questionIndex);
+                return created;
+            });
+
+        answer.setQuestion(question);
+        answer.setCategory(category);
+        answer.setUserAnswer(userAnswer);
+        answer.setScore(score);
+        answer.setFeedback(feedback);
+        answer.setReferenceAnswer(referenceAnswer);
+        try {
+            answer.setKeyPointsJson(
+                keyPoints == null || keyPoints.isEmpty()
+                    ? null
+                    : objectMapper.writeValueAsString(keyPoints)
+            );
+        } catch (JacksonException e) {
+            log.error("序列化关键点失败: sessionId={}, questionIndex={}", sessionId, questionIndex, e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "保存答案评估失败");
+        }
+
+        answerRepository.save(answer);
+        log.info("单题评估结果已保存: sessionId={}, questionIndex={}, score={}", sessionId, questionIndex, score);
     }
     
     /**
@@ -172,6 +268,42 @@ public class InterviewPersistenceService {
             session.setReferenceAnswersJson(objectMapper.writeValueAsString(report.referenceAnswers()));
             session.setStatus(InterviewSessionEntity.SessionStatus.EVALUATED);
             session.setCompletedAt(LocalDateTime.now());
+            session.setEvaluateStatus(AsyncTaskStatus.COMPLETED);
+            session.setEvaluateError(null);
+
+            List<InterviewQuestionDTO> currentQuestions = session.getQuestionsJson() == null || session.getQuestionsJson().isBlank()
+                ? new java.util.ArrayList<>()
+                : objectMapper.readValue(session.getQuestionsJson(), new TypeReference<>() {});
+            java.util.Map<Integer, InterviewReportDTO.QuestionEvaluation> evaluationMap = report.questionDetails().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                    InterviewReportDTO.QuestionEvaluation::questionIndex,
+                    value -> value,
+                    (left, right) -> left
+                ));
+            java.util.Map<Integer, InterviewReportDTO.ReferenceAnswer> referenceAnswerMap = report.referenceAnswers().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                    InterviewReportDTO.ReferenceAnswer::questionIndex,
+                    value -> value,
+                    (left, right) -> left
+                ));
+            for (int i = 0; i < currentQuestions.size(); i++) {
+                InterviewQuestionDTO question = currentQuestions.get(i);
+                InterviewReportDTO.QuestionEvaluation evaluation = evaluationMap.get(question.questionIndex());
+                InterviewReportDTO.ReferenceAnswer referenceAnswer = referenceAnswerMap.get(question.questionIndex());
+                if (evaluation != null) {
+                    question = question.withAnswer(evaluation.userAnswer());
+                    question = question.withEvaluation(
+                        evaluation.score(),
+                        evaluation.feedback(),
+                        referenceAnswer != null ? referenceAnswer.referenceAnswer() : "",
+                        referenceAnswer != null && referenceAnswer.keyPoints() != null
+                            ? referenceAnswer.keyPoints()
+                            : List.of()
+                    );
+                    currentQuestions.set(i, question);
+                }
+            }
+            session.setQuestionsJson(objectMapper.writeValueAsString(currentQuestions));
 
             sessionRepository.save(session);
 
@@ -297,6 +429,70 @@ public class InterviewPersistenceService {
     }
 
     /**
+     * 读取已落库的面试报告
+     */
+    public Optional<InterviewReportDTO> findStoredReport(String sessionId) {
+        Optional<InterviewSessionEntity> sessionOpt = sessionRepository.findBySessionId(sessionId);
+        if (sessionOpt.isEmpty()) {
+            return Optional.empty();
+        }
+
+        InterviewSessionEntity session = sessionOpt.get();
+        if (session.getOverallScore() == null || session.getOverallFeedback() == null) {
+            return Optional.empty();
+        }
+
+        List<InterviewAnswerEntity> answers = answerRepository.findBySession_SessionIdOrderByQuestionIndex(sessionId);
+        List<InterviewReportDTO.QuestionEvaluation> questionDetails = new ArrayList<>();
+        for (InterviewAnswerEntity answer : answers) {
+            questionDetails.add(new InterviewReportDTO.QuestionEvaluation(
+                answer.getQuestionIndex(),
+                answer.getQuestion(),
+                answer.getCategory(),
+                answer.getUserAnswer(),
+                answer.getScore() != null ? answer.getScore() : 0,
+                answer.getFeedback()
+            ));
+        }
+
+        List<InterviewReportDTO.ReferenceAnswer> referenceAnswers =
+            session.getReferenceAnswersJson() == null || session.getReferenceAnswersJson().isBlank()
+                ? List.of()
+                : parseJson(session.getReferenceAnswersJson(), new TypeReference<>() {});
+
+        java.util.Map<String, List<Integer>> categoryScoreMap = new java.util.LinkedHashMap<>();
+        for (InterviewReportDTO.QuestionEvaluation evaluation : questionDetails) {
+            categoryScoreMap.computeIfAbsent(evaluation.category(), ignored -> new ArrayList<>()).add(evaluation.score());
+        }
+        List<InterviewReportDTO.CategoryScore> categoryScores = categoryScoreMap.entrySet().stream()
+            .map(entry -> new InterviewReportDTO.CategoryScore(
+                entry.getKey(),
+                (int) entry.getValue().stream().mapToInt(Integer::intValue).average().orElse(0),
+                entry.getValue().size()
+            ))
+            .toList();
+
+        List<String> strengths = session.getStrengthsJson() == null || session.getStrengthsJson().isBlank()
+            ? List.of()
+            : parseJson(session.getStrengthsJson(), new TypeReference<>() {});
+        List<String> improvements = session.getImprovementsJson() == null || session.getImprovementsJson().isBlank()
+            ? List.of()
+            : parseJson(session.getImprovementsJson(), new TypeReference<>() {});
+
+        return Optional.of(new InterviewReportDTO(
+            sessionId,
+            session.getTotalQuestions() != null ? session.getTotalQuestions() : questionDetails.size(),
+            session.getOverallScore(),
+            categoryScores,
+            questionDetails,
+            session.getOverallFeedback(),
+            strengths,
+            improvements,
+            referenceAnswers
+        ));
+    }
+
+    /**
      * 获取简历的历史提问列表（限制最近的 N 条）
      */
     public List<String> getHistoricalQuestionsByResumeId(Long resumeId) {
@@ -322,5 +518,13 @@ public class InterviewPersistenceService {
             .distinct()
             .limit(30) // 核心改动：只保留最近的 30 道题
             .toList();
+    }
+
+    private <T> T parseJson(String json, TypeReference<T> typeReference) {
+        try {
+            return objectMapper.readValue(json, typeReference);
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "解析面试报告数据失败");
+        }
     }
 }

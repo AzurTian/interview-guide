@@ -4,14 +4,18 @@ import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interview.model.*;
 import interview.guide.modules.interview.service.InterviewHistoryService;
+import interview.guide.modules.interview.service.InterviewQuestionStreamService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
 import interview.guide.modules.interview.service.InterviewSessionService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -29,13 +33,14 @@ public class InterviewController {
     private final InterviewSessionService sessionService;
     private final InterviewHistoryService historyService;
     private final InterviewPersistenceService persistenceService;
+    private final InterviewQuestionStreamService questionStreamService;
     
     /**
      * 创建面试会话
      */
     @PostMapping("/api/interview/sessions")
     @RateLimit(dimensions = {RateLimit.Dimension.GLOBAL, RateLimit.Dimension.IP}, count = 5)
-    public Result<InterviewSessionDTO> createSession(@RequestBody CreateInterviewRequest request) {
+    public Result<InterviewSessionDTO> createSession(@Valid @RequestBody CreateInterviewRequest request) {
         log.info("创建面试会话，题目数量: {}", request.questionCount());
         InterviewSessionDTO session = sessionService.createSession(request);
         return Result.success(session);
@@ -57,6 +62,14 @@ public class InterviewController {
     public Result<Map<String, Object>> getCurrentQuestion(@PathVariable String sessionId) {
         return Result.success(sessionService.getCurrentQuestionResponse(sessionId));
     }
+
+    /**
+     * 订阅题目流
+     */
+    @GetMapping(value = "/api/interview/sessions/{sessionId}/questions/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> subscribeQuestionStream(@PathVariable String sessionId) {
+        return questionStreamService.subscribe(sessionId, () -> sessionService.getSession(sessionId));
+    }
     
     /**
      * 提交答案
@@ -65,11 +78,9 @@ public class InterviewController {
     @RateLimit(dimensions = {RateLimit.Dimension.GLOBAL}, count = 10)
     public Result<SubmitAnswerResponse> submitAnswer(
             @PathVariable String sessionId,
-            @RequestBody Map<String, Object> body) {
-        Integer questionIndex = (Integer) body.get("questionIndex");
-        String answer = (String) body.get("answer");
-        log.info("提交答案: 会话{}, 问题{}", sessionId, questionIndex);
-        SubmitAnswerRequest request = new SubmitAnswerRequest(sessionId, questionIndex, answer);
+            @Valid @RequestBody AnswerContentRequest body) {
+        log.info("提交答案: 会话{}, 问题{}", sessionId, body.questionIndex());
+        SubmitAnswerRequest request = new SubmitAnswerRequest(sessionId, body.questionIndex(), body.answer());
         SubmitAnswerResponse response = sessionService.submitAnswer(request);
         return Result.success(response);
     }
@@ -99,11 +110,9 @@ public class InterviewController {
     @PutMapping("/api/interview/sessions/{sessionId}/answers")
     public Result<Void> saveAnswer(
             @PathVariable String sessionId,
-            @RequestBody Map<String, Object> body) {
-        Integer questionIndex = (Integer) body.get("questionIndex");
-        String answer = (String) body.get("answer");
-        log.info("暂存答案: 会话{}, 问题{}", sessionId, questionIndex);
-        SubmitAnswerRequest request = new SubmitAnswerRequest(sessionId, questionIndex, answer);
+            @Valid @RequestBody AnswerContentRequest body) {
+        log.info("暂存答案: 会话{}, 问题{}", sessionId, body.questionIndex());
+        SubmitAnswerRequest request = new SubmitAnswerRequest(sessionId, body.questionIndex(), body.answer());
         sessionService.saveAnswer(request);
         return Result.success(null);
     }

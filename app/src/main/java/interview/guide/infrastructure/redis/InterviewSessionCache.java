@@ -1,5 +1,6 @@
 package interview.guide.infrastructure.redis;
 
+import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
 import lombok.Data;
@@ -50,21 +51,35 @@ public class InterviewSessionCache {
         private String sessionId;
         private String resumeText;
         private Long resumeId;
+        private int totalQuestions;
         private String questionsJson;  // 序列化的问题列表
+        private int generatedQuestionCount;
         private int currentIndex;
         private SessionStatus status;
+        private AsyncTaskStatus questionGenerationStatus;
+        private String questionGenerationError;
 
         public CachedSession() {
         }
 
         public CachedSession(String sessionId, String resumeText, Long resumeId,
-                            List<InterviewQuestionDTO> questions, int currentIndex,
-                            SessionStatus status, ObjectMapper objectMapper) {
+                            int totalQuestions,
+                            List<InterviewQuestionDTO> questions,
+                            int generatedQuestionCount,
+                            int currentIndex,
+                            SessionStatus status,
+                            AsyncTaskStatus questionGenerationStatus,
+                            String questionGenerationError,
+                            ObjectMapper objectMapper) {
             this.sessionId = sessionId;
             this.resumeText = resumeText;
             this.resumeId = resumeId;
+            this.totalQuestions = totalQuestions;
+            this.generatedQuestionCount = generatedQuestionCount;
             this.currentIndex = currentIndex;
             this.status = status;
+            this.questionGenerationStatus = questionGenerationStatus;
+            this.questionGenerationError = questionGenerationError;
             try {
                 this.questionsJson = objectMapper.writeValueAsString(questions);
             } catch (JacksonException e) {
@@ -85,11 +100,26 @@ public class InterviewSessionCache {
      * 保存会话到缓存
      */
     public void saveSession(String sessionId, String resumeText, Long resumeId,
-                           List<InterviewQuestionDTO> questions, int currentIndex,
-                           SessionStatus status) {
+                           int totalQuestions,
+                           List<InterviewQuestionDTO> questions,
+                           int totalGeneratedQuestions,
+                           int currentIndex,
+                           SessionStatus status,
+                           AsyncTaskStatus questionGenerationStatus,
+                           String questionGenerationError) {
         String key = buildSessionKey(sessionId);
         CachedSession cachedSession = new CachedSession(
-            sessionId, resumeText, resumeId, questions, currentIndex, status, objectMapper
+            sessionId,
+            resumeText,
+            resumeId,
+            totalQuestions,
+            questions,
+            totalGeneratedQuestions,
+            currentIndex,
+            status,
+            questionGenerationStatus,
+            questionGenerationError,
+            objectMapper
         );
 
         redisService.set(key, cachedSession, SESSION_TTL);
@@ -152,12 +182,29 @@ public class InterviewSessionCache {
         getSession(sessionId).ifPresent(session -> {
             try {
                 session.setQuestionsJson(objectMapper.writeValueAsString(questions));
+                session.setGeneratedQuestionCount(questions.size());
                 String key = buildSessionKey(sessionId);
                 redisService.set(key, session, SESSION_TTL);
                 log.debug("更新会话问题: sessionId={}", sessionId);
             } catch (JacksonException e) {
                 log.error("序列化问题列表失败", e);
             }
+        });
+    }
+
+    /**
+     * 更新题目生成状态
+     */
+    public void updateQuestionGenerationState(String sessionId, AsyncTaskStatus status, String error) {
+        getSession(sessionId).ifPresent(session -> {
+            session.setQuestionGenerationStatus(status);
+            session.setQuestionGenerationError(error);
+            if (status == AsyncTaskStatus.COMPLETED) {
+                session.setGeneratedQuestionCount(session.getQuestions(objectMapper).size());
+            }
+            String key = buildSessionKey(sessionId);
+            redisService.set(key, session, SESSION_TTL);
+            log.debug("更新题目生成状态: sessionId={}, status={}", sessionId, status);
         });
     }
 

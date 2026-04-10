@@ -1,12 +1,16 @@
 // 面试相关类型定义
+export type QuestionGenerationStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 
 export interface InterviewSession {
   sessionId: string;
   resumeText: string;
   totalQuestions: number;
+  generatedQuestionCount: number;
   currentQuestionIndex: number;
   questions: InterviewQuestion[];
   status: 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'EVALUATED';
+  questionGenerationStatus: QuestionGenerationStatus;
+  questionGenerationError: string | null;
 }
 
 export interface InterviewQuestion {
@@ -17,6 +21,10 @@ export interface InterviewQuestion {
   userAnswer: string | null;
   score: number | null;
   feedback: string | null;
+  referenceAnswer?: string | null;
+  keyPoints?: string[] | null;
+  isFollowUp?: boolean;
+  parentQuestionIndex?: number | null;
 }
 
 export type QuestionType = 
@@ -45,14 +53,27 @@ export interface SubmitAnswerRequest {
 export interface SubmitAnswerResponse {
   hasNextQuestion: boolean;
   nextQuestion: InterviewQuestion | null;
+  waitingForNextQuestion: boolean;
+  completed: boolean;
   currentIndex: number;
   totalQuestions: number;
 }
 
 export interface CurrentQuestionResponse {
   completed: boolean;
+  waitingForNextQuestion?: boolean;
   question?: InterviewQuestion;
   message?: string;
+}
+
+export interface InterviewQuestionStreamEvent {
+  type: 'snapshot' | 'question' | 'completed' | 'error';
+  session?: InterviewSession | null;
+  question?: InterviewQuestion | null;
+  generatedQuestionCount?: number | null;
+  totalQuestions?: number | null;
+  questionGenerationStatus?: QuestionGenerationStatus | null;
+  error?: string | null;
 }
 
 export interface InterviewReport {

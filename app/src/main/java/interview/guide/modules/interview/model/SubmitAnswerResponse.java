@@ -6,6 +6,8 @@ package interview.guide.modules.interview.model;
 public record SubmitAnswerResponse(
     boolean hasNextQuestion,
     InterviewQuestionDTO nextQuestion,
+    boolean waitingForNextQuestion,
+    boolean completed,
     int currentIndex,
     int totalQuestions
 ) {}

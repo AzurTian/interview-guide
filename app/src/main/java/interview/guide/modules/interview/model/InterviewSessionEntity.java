@@ -33,6 +33,9 @@ public class InterviewSessionEntity {
     
     // 问题总数
     private Integer totalQuestions;
+
+    // 已生成题目数
+    private Integer generatedQuestionCount = 0;
     
     // 当前问题索引
     private Integer currentQuestionIndex = 0;
@@ -84,6 +87,15 @@ public class InterviewSessionEntity {
     // 评估错误信息
     @Column(length = 500)
     private String evaluateError;
+
+    // 题目生成状态（异步生成）
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private AsyncTaskStatus questionGenerationStatus;
+
+    // 题目生成错误信息
+    @Column(length = 500)
+    private String questionGenerationError;
     
     public enum SessionStatus {
         CREATED,      // 会话已创建
@@ -128,6 +140,14 @@ public class InterviewSessionEntity {
     
     public void setTotalQuestions(Integer totalQuestions) {
         this.totalQuestions = totalQuestions;
+    }
+
+    public Integer getGeneratedQuestionCount() {
+        return generatedQuestionCount;
+    }
+
+    public void setGeneratedQuestionCount(Integer generatedQuestionCount) {
+        this.generatedQuestionCount = generatedQuestionCount;
     }
     
     public Integer getCurrentQuestionIndex() {
@@ -232,6 +252,22 @@ public class InterviewSessionEntity {
 
     public void setEvaluateError(String evaluateError) {
         this.evaluateError = evaluateError;
+    }
+
+    public AsyncTaskStatus getQuestionGenerationStatus() {
+        return questionGenerationStatus;
+    }
+
+    public void setQuestionGenerationStatus(AsyncTaskStatus questionGenerationStatus) {
+        this.questionGenerationStatus = questionGenerationStatus;
+    }
+
+    public String getQuestionGenerationError() {
+        return questionGenerationError;
+    }
+
+    public void setQuestionGenerationError(String questionGenerationError) {
+        this.questionGenerationError = questionGenerationError;
     }
 
     public void addAnswer(InterviewAnswerEntity answer) {
