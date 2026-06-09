@@ -1,5 +1,6 @@
 package interview.guide.modules.llmprovider.service;
 
+import interview.guide.common.ai.ProviderApiType;
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.config.LlmProviderProperties;
 import interview.guide.common.exception.BusinessException;
@@ -27,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.HashMap;
+import org.springframework.http.HttpHeaders;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -141,6 +143,38 @@ class LlmProviderConfigServiceTest {
             assertEquals(1, body.get("max_tokens"));
             assertTrue(body.containsKey("messages"));
             assertTrue(!body.containsKey("temperature"));
+        }
+
+        @Test
+        @DisplayName("Responses 连接测试使用 /responses 和 max_output_tokens")
+        void responsesConnectivityUsesResponsesProtocol() throws Exception {
+            List<String> urls = invokeConnectivityUrls(
+                ProviderApiType.OPENAI_RESPONSES, "https://api.openai.com/v1");
+            Map<String, Object> body = invokeConnectivityRequestBody(
+                ProviderApiType.OPENAI_RESPONSES, "gpt-5.5");
+
+            assertEquals(List.of("https://api.openai.com/v1/responses"), urls);
+            assertEquals("gpt-5.5", body.get("model"));
+            assertEquals(1, body.get("max_output_tokens"));
+            assertTrue(body.containsKey("input"));
+        }
+
+        @Test
+        @DisplayName("Anthropic 连接测试使用 Messages endpoint 和 Anthropic headers")
+        void anthropicConnectivityUsesMessagesProtocol() throws Exception {
+            List<String> urls = invokeConnectivityUrls(
+                ProviderApiType.ANTHROPIC_MESSAGES, "https://api.anthropic.com");
+            Map<String, Object> body = invokeConnectivityRequestBody(
+                ProviderApiType.ANTHROPIC_MESSAGES, "claude-opus-test");
+            HttpHeaders headers = invokeConnectivityHeaders(
+                ProviderApiType.ANTHROPIC_MESSAGES, "sk-ant-test");
+
+            assertEquals(List.of("https://api.anthropic.com/v1/messages"), urls);
+            assertEquals("claude-opus-test", body.get("model"));
+            assertEquals(1, body.get("max_tokens"));
+            assertTrue(body.containsKey("messages"));
+            assertEquals("sk-ant-test", headers.getFirst("x-api-key"));
+            assertEquals("2023-06-01", headers.getFirst("anthropic-version"));
         }
     }
 
@@ -447,6 +481,18 @@ class LlmProviderConfigServiceTest {
         return (List<String>) method.invoke(service, baseUrl);
     }
 
+    @SuppressWarnings("unchecked")
+    private List<String> invokeConnectivityUrls(ProviderApiType apiType, String baseUrl)
+        throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        Method method = LlmProviderConfigService.class.getDeclaredMethod(
+            "buildConnectivityTestUrls",
+            ProviderApiType.class,
+            String.class
+        );
+        method.setAccessible(true);
+        return (List<String>) method.invoke(service, apiType, baseUrl);
+    }
+
     private void invokeMethod(Object target, String methodName, Object... args)
         throws Exception {
         Class<?>[] paramTypes = new Class<?>[args.length];
@@ -467,5 +513,28 @@ class LlmProviderConfigServiceTest {
         );
         method.setAccessible(true);
         return (Map<String, Object>) method.invoke(service, model);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> invokeConnectivityRequestBody(ProviderApiType apiType, String model)
+        throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        Method method = LlmProviderConfigService.class.getDeclaredMethod(
+            "buildConnectivityTestRequestBody",
+            ProviderApiType.class,
+            String.class
+        );
+        method.setAccessible(true);
+        return (Map<String, Object>) method.invoke(service, apiType, model);
+    }
+
+    private HttpHeaders invokeConnectivityHeaders(ProviderApiType apiType, String apiKey)
+        throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        Method method = LlmProviderConfigService.class.getDeclaredMethod(
+            "buildConnectivityTestHeaders",
+            ProviderApiType.class,
+            String.class
+        );
+        method.setAccessible(true);
+        return (HttpHeaders) method.invoke(service, apiType, apiKey);
     }
 }

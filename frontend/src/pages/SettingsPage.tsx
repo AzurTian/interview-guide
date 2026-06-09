@@ -10,11 +10,13 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import type {
   ProviderItem, CreateProviderRequest, UpdateProviderRequest,
   ProviderTestResult, AsrConfig, TtsConfig, AsrConfigRequest, TtsConfigRequest,
+  ProviderApiType,
 } from '../types/llmProvider';
 
 // Provider 预设：已知 Provider 的 Base URL、推荐模型和向量模型
 const PROVIDER_PRESETS: Record<string, {
   baseUrl: string;
+  apiType: ProviderApiType;
   models: { value: string; label: string }[];
   embeddingModels?: { value: string; label: string }[];
   embeddingDimensions?: number;
@@ -22,6 +24,7 @@ const PROVIDER_PRESETS: Record<string, {
 }> = {
   dashscope: {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    apiType: 'OPENAI_CHAT_COMPLETIONS',
     models: [
       { value: 'qwen3.6-flash', label: 'Qwen3.6 Flash — 最新旗舰' },
       { value: 'qwen3.5-plus', label: 'Qwen3.5 Plus — 高性能' },
@@ -40,6 +43,7 @@ const PROVIDER_PRESETS: Record<string, {
   },
   deepseek: {
     baseUrl: 'https://api.deepseek.com',
+    apiType: 'OPENAI_CHAT_COMPLETIONS',
     models: [
       { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash — 最新·快速' },
       { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro — 最强推理' },
@@ -50,6 +54,7 @@ const PROVIDER_PRESETS: Record<string, {
   },
   glm: {
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    apiType: 'OPENAI_CHAT_COMPLETIONS',
     models: [
       { value: 'glm-5.1', label: 'GLM-5.1 — 最新旗舰' },
       { value: 'glm-5', label: 'GLM-5 — 旗舰' },
@@ -68,6 +73,7 @@ const PROVIDER_PRESETS: Record<string, {
   },
   kimi: {
     baseUrl: 'https://api.moonshot.cn/v1',
+    apiType: 'OPENAI_CHAT_COMPLETIONS',
     models: [
       { value: 'kimi-k2.6', label: 'Kimi K2.6 — 最新最智能' },
       { value: 'kimi-k2.5', label: 'Kimi K2.5 — 多模态' },
@@ -77,6 +83,38 @@ const PROVIDER_PRESETS: Record<string, {
     ],
     supportsEmbedding: false,
   },
+  openai: {
+    baseUrl: 'https://api.openai.com/v1',
+    apiType: 'OPENAI_RESPONSES',
+    models: [
+      { value: 'gpt-5.5', label: 'GPT-5.5 — Responses' },
+      { value: 'gpt-5.1', label: 'GPT-5.1 — Responses' },
+      { value: 'gpt-4.1', label: 'GPT-4.1 — Responses' },
+    ],
+    supportsEmbedding: false,
+  },
+  anthropic: {
+    baseUrl: 'https://api.anthropic.com',
+    apiType: 'ANTHROPIC_MESSAGES',
+    models: [
+      { value: 'claude-opus-4.8', label: 'Claude Opus 4.8 — Messages' },
+      { value: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5 — Messages' },
+      { value: 'claude-haiku-4.5', label: 'Claude Haiku 4.5 — Messages' },
+    ],
+    supportsEmbedding: false,
+  },
+};
+
+const API_TYPE_OPTIONS: { value: ProviderApiType; label: string }[] = [
+  { value: 'OPENAI_CHAT_COMPLETIONS', label: 'OpenAI Chat Completions' },
+  { value: 'OPENAI_RESPONSES', label: 'OpenAI Responses' },
+  { value: 'ANTHROPIC_MESSAGES', label: 'Anthropic Messages' },
+];
+
+const API_TYPE_LABELS: Record<ProviderApiType, string> = {
+  OPENAI_CHAT_COMPLETIONS: 'Chat Completions',
+  OPENAI_RESPONSES: 'Responses',
+  ANTHROPIC_MESSAGES: 'Anthropic Messages',
 };
 
 type ConfigRowProps = {
@@ -153,6 +191,7 @@ export default function SettingsPage() {
   const [formBaseUrl, setFormBaseUrl] = useState('');
   const [formApiKey, setFormApiKey] = useState('');
   const [formModel, setFormModel] = useState('');
+  const [formApiType, setFormApiType] = useState<ProviderApiType>('OPENAI_CHAT_COMPLETIONS');
   const [formEmbeddingModel, setFormEmbeddingModel] = useState('');
   const [formEmbeddingDimensions, setFormEmbeddingDimensions] = useState('1024');
   const [formSupportsEmbedding, setFormSupportsEmbedding] = useState(false);
@@ -244,6 +283,7 @@ export default function SettingsPage() {
     setFormBaseUrl('');
     setFormApiKey('');
     setFormModel('');
+    setFormApiType('OPENAI_CHAT_COMPLETIONS');
     setFormEmbeddingModel('');
     setFormEmbeddingDimensions('1024');
     setFormSupportsEmbedding(false);
@@ -257,6 +297,7 @@ export default function SettingsPage() {
     setFormBaseUrl(provider.baseUrl);
     setFormApiKey('');
     setFormModel(provider.model);
+    setFormApiType(provider.apiType ?? 'OPENAI_CHAT_COMPLETIONS');
     setFormEmbeddingModel(provider.embeddingModel || '');
     setFormEmbeddingDimensions(provider.embeddingDimensions != null ? String(provider.embeddingDimensions) : '1024');
     setFormSupportsEmbedding(provider.supportsEmbedding);
@@ -292,6 +333,7 @@ export default function SettingsPage() {
         baseUrl: formBaseUrl.trim(),
         apiKey: formApiKey.trim(),
         model: formModel.trim(),
+        apiType: formApiType,
         supportsEmbedding: formSupportsEmbedding,
       };
       if (formEmbeddingModel.trim()) {
@@ -334,6 +376,7 @@ export default function SettingsPage() {
       const data: UpdateProviderRequest = {
         baseUrl: formBaseUrl.trim(),
         model: formModel.trim(),
+        apiType: formApiType,
         embeddingModel: formEmbeddingModel.trim(),
         supportsEmbedding: formSupportsEmbedding,
       };
@@ -636,6 +679,11 @@ export default function SettingsPage() {
                         <ConfigRow label="Base URL" value={provider.baseUrl} title={provider.baseUrl} emphasis />
                         <ConfigRow label="聊天模型" value={provider.model} title={provider.model} emphasis />
                         <ConfigRow
+                          label="接口类型"
+                          value={API_TYPE_LABELS[provider.apiType ?? 'OPENAI_CHAT_COMPLETIONS']}
+                          title={provider.apiType ?? 'OPENAI_CHAT_COMPLETIONS'}
+                        />
+                        <ConfigRow
                           label="向量模型"
                           value={canUseEmbedding ? '支持' : '不支持'}
                           title={canUseEmbedding ? provider.embeddingModel ?? '' : '不能用于知识库向量化'}
@@ -885,7 +933,7 @@ export default function SettingsPage() {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-lg w-full p-6"
+                className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto"
               >
                 <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-5">
                   {editingProvider ? '编辑 Provider' : '新增 Provider'}
@@ -908,6 +956,7 @@ export default function SettingsPage() {
                           const preset = PROVIDER_PRESETS[newId.toLowerCase()];
                           if (preset) {
                             setFormBaseUrl(preset.baseUrl);
+                            setFormApiType(preset.apiType);
                             setFormSupportsEmbedding(preset.supportsEmbedding);
                             setFormEmbeddingModel(preset.embeddingModels?.[0]?.value ?? '');
                             setFormEmbeddingDimensions(String(preset.embeddingDimensions ?? 1024));
@@ -922,6 +971,27 @@ export default function SettingsPage() {
                         focus:ring-primary-500/50 focus:border-primary-400 transition-shadow
                         disabled:opacity-50 disabled:cursor-not-allowed"
                     />
+                  </div>
+
+                  {/* API Type */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                      接口类型
+                    </label>
+                    <select
+                      value={formApiType}
+                      onChange={(e) => setFormApiType(e.target.value as ProviderApiType)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
+                        bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
+                        focus:outline-none focus:ring-2 focus:ring-primary-500/50
+                        focus:border-primary-400 transition-shadow"
+                    >
+                      {API_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* Base URL */}

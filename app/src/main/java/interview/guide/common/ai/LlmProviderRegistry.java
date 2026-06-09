@@ -18,6 +18,7 @@ import org.springframework.ai.chat.client.advisor.SafeGuardAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
@@ -49,7 +50,8 @@ public class LlmProviderRegistry {
 
     private final LlmProviderProperties properties;
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
-    private final Map<String, OpenAiChatModel> chatModelCache = new ConcurrentHashMap<>();
+    private final Map<String, ChatModel> chatModelCache = new ConcurrentHashMap<>();
+    private final Map<String, ProviderApiType> apiTypeCache = new ConcurrentHashMap<>();
     private final Map<String, EmbeddingModel> embeddingModelCache = new ConcurrentHashMap<>();
     private final LlmProviderRepository providerRepository;
     private final LlmGlobalSettingRepository globalSettingRepository;
@@ -148,9 +150,11 @@ public class LlmProviderRegistry {
      * 清空缓存，重新加载所有 provider。
      */
     public void reload() {
-        int size = clientCache.size() + chatModelCache.size() + embeddingModelCache.size();
+        int size = clientCache.size() + chatModelCache.size() + apiTypeCache.size()
+            + embeddingModelCache.size();
         clientCache.clear();
         chatModelCache.clear();
+        apiTypeCache.clear();
         embeddingModelCache.clear();
         log.info("[LlmProviderRegistry] Cache cleared ({} entries). Next access will re-create clients.", size);
     }
@@ -167,13 +171,17 @@ public class LlmProviderRegistry {
     }
 
     private ChatClient createChatClient(String providerId) {
-        OpenAiChatModel chatModel = getChatModel(providerId);
+        ChatModel chatModel = getChatModel(providerId);
+        ProviderApiType apiType = getProviderApiType(providerId);
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
-        if (interviewSkillsToolCallback != null) {
+        if (interviewSkillsToolCallback != null && supportsToolCalling(apiType)) {
             builder.defaultToolCallbacks(interviewSkillsToolCallback);
+        } else if (interviewSkillsToolCallback != null) {
+            log.warn("[LlmProviderRegistry] Tool callbacks skipped for text-only provider: provider={}, apiType={}",
+                providerId, apiType);
         }
-        List<Advisor> advisors = buildDefaultAdvisors(providerId);
+        List<Advisor> advisors = buildDefaultAdvisors(providerId, apiType);
         if (!advisors.isEmpty()) {
             builder.defaultAdvisors(advisors.toArray(new Advisor[0]));
             log.info("[LlmProviderRegistry] Applied {} advisors for provider {}", advisors.size(), providerId);
@@ -183,7 +191,7 @@ public class LlmProviderRegistry {
     }
 
     private ChatClient createPlainChatClient(String providerId) {
-        OpenAiChatModel chatModel = getChatModel(providerId);
+        ChatModel chatModel = getChatModel(providerId);
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(advisor));
         log.info("[LlmProviderRegistry] Created plain ChatClient (no tools) for {}", providerId);
@@ -191,15 +199,22 @@ public class LlmProviderRegistry {
     }
 
     private ChatClient createVoiceChatClient(String providerId) {
-        OpenAiChatModel chatModel = getChatModel(providerId);
+        ChatModel chatModel = getChatModel(providerId);
+        ProviderApiType apiType = getProviderApiType(providerId);
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
-        if (interviewSkillsToolCallback != null) {
+        if (interviewSkillsToolCallback != null && supportsToolCalling(apiType)) {
             builder.defaultToolCallbacks(interviewSkillsToolCallback);
+        } else if (interviewSkillsToolCallback != null) {
+            log.warn("[LlmProviderRegistry] Voice tool callbacks skipped for text-only provider: provider={}, apiType={}",
+                providerId, apiType);
         }
         List<Advisor> advisors = new ArrayList<>();
-        if (toolCallingManager != null) {
+        if (toolCallingManager != null && supportsToolCalling(apiType)) {
             advisors.add(buildToolCallAdvisor(true, true));
+        } else if (toolCallingManager != null) {
+            log.warn("[LlmProviderRegistry] ToolCallAdvisor skipped for text-only voice provider: provider={}, apiType={}",
+                providerId, apiType);
         }
         buildSafeGuardAdvisor().ifPresent(advisors::add);
         if (!advisors.isEmpty()) {
@@ -209,19 +224,36 @@ public class LlmProviderRegistry {
         return builder.build();
     }
 
-    private OpenAiChatModel getChatModel(String providerId) {
+    private ChatModel getChatModel(String providerId) {
         return chatModelCache.computeIfAbsent(providerId, id -> {
             log.info("[LlmProviderRegistry] Creating new ChatModel for provider: {}", id);
             return buildChatModel(id);
         });
     }
 
-    private OpenAiChatModel buildChatModel(String providerId) {
+    private ChatModel buildChatModel(String providerId) {
         ProviderSnapshot config = loadProviderOrThrow(providerId);
-        log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
-                 providerId, config.baseUrl(), config.model());
+        apiTypeCache.put(providerId, config.apiType());
+        log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}, ApiType: {}",
+                 providerId, config.baseUrl(), config.model(), config.apiType());
 
-        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
+        return switch (config.apiType()) {
+            case OPENAI_CHAT_COMPLETIONS -> buildOpenAiChatCompletionsModel(config);
+            case OPENAI_RESPONSES -> new OpenAiResponsesChatModel(
+                config.baseUrl(), config.apiKey(), config.model(), config.temperature(), null);
+            case ANTHROPIC_MESSAGES -> new AnthropicMessagesChatModel(
+                config.baseUrl(), config.apiKey(), config.model(), config.temperature(), null);
+        };
+    }
+
+    private ProviderApiType getProviderApiType(String providerId) {
+        return apiTypeCache.computeIfAbsent(providerId, id -> loadProviderOrThrow(id).apiType());
+    }
+
+    private OpenAiChatModel buildOpenAiChatCompletionsModel(ProviderSnapshot config) {
+        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(
+            config.baseUrl(),
+            ApiKeySanitizer.requirePresent(config.apiKey(), config.id()));
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(config.model())
@@ -255,7 +287,9 @@ public class LlmProviderRegistry {
         log.info("[LlmProviderRegistry] Building EmbeddingModel - Provider: {}, BaseUrl: {}, Model: {}",
             providerId, config.baseUrl(), config.embeddingModel());
 
-        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
+        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(
+            config.baseUrl(),
+            ApiKeySanitizer.requirePresent(config.apiKey(), config.id()));
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
             .model(config.embeddingModel())
             .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
@@ -270,7 +304,7 @@ public class LlmProviderRegistry {
         );
     }
 
-    private List<Advisor> buildDefaultAdvisors(String providerId) {
+    private List<Advisor> buildDefaultAdvisors(String providerId, ProviderApiType apiType) {
         AdvisorConfig config = properties.getAdvisors();
         if (config == null || !config.isEnabled()) {
             return List.of();
@@ -278,7 +312,7 @@ public class LlmProviderRegistry {
 
         List<Advisor> advisors = new ArrayList<>();
 
-        if (config.isToolCallEnabled()) {
+        if (config.isToolCallEnabled() && supportsToolCalling(apiType)) {
             if (toolCallingManager != null) {
                 advisors.add(buildToolCallAdvisor(
                     config.isToolCallConversationHistoryEnabled(),
@@ -286,6 +320,9 @@ public class LlmProviderRegistry {
             } else {
                 log.warn("[LlmProviderRegistry] ToolCallAdvisor skipped: ToolCallingManager unavailable, provider={}", providerId);
             }
+        } else if (config.isToolCallEnabled()) {
+            log.warn("[LlmProviderRegistry] ToolCallAdvisor skipped for text-only provider: provider={}, apiType={}",
+                providerId, apiType);
         }
 
         if (config.isMessageChatMemoryEnabled()) {
@@ -305,6 +342,10 @@ public class LlmProviderRegistry {
         buildSafeGuardAdvisor().ifPresent(advisors::add);
 
         return advisors;
+    }
+
+    private boolean supportsToolCalling(ProviderApiType apiType) {
+        return ProviderApiType.resolve(apiType) == ProviderApiType.OPENAI_CHAT_COMPLETIONS;
     }
 
     private ToolCallAdvisor buildToolCallAdvisor(boolean conversationHistoryEnabled,
@@ -370,6 +411,7 @@ public class LlmProviderRegistry {
             entity.getBaseUrl(),
             encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext()),
             entity.getModel(),
+            ProviderApiType.resolve(entity.getApiType()),
             entity.getEmbeddingModel(),
             entity.getEmbeddingDimensions(),
             entity.isSupportsEmbedding(),
@@ -390,6 +432,7 @@ public class LlmProviderRegistry {
             config.getBaseUrl(),
             config.getApiKey(),
             config.getModel(),
+            ProviderApiType.resolve(config.getApiType()),
             config.getEmbeddingModel(),
             config.getEmbeddingDimensions(),
             supportsEmbedding,
@@ -423,6 +466,7 @@ public class LlmProviderRegistry {
         String baseUrl,
         String apiKey,
         String model,
+        ProviderApiType apiType,
         String embeddingModel,
         Integer embeddingDimensions,
         boolean supportsEmbedding,

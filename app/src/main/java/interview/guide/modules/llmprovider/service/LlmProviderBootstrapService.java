@@ -1,5 +1,6 @@
 package interview.guide.modules.llmprovider.service;
 
+import interview.guide.common.ai.ProviderApiType;
 import interview.guide.common.config.LlmProviderProperties;
 import interview.guide.common.config.LlmProviderProperties.ProviderConfig;
 import interview.guide.modules.llmprovider.model.LlmGlobalSettingEntity;
@@ -28,6 +29,8 @@ public class LlmProviderBootstrapService {
   public void seedProvidersIfNecessary() {
     if (providerRepository.count() == 0) {
       seedProviders();
+    } else {
+      syncConfiguredBuiltinProviders();
     }
     ensureGlobalSetting();
   }
@@ -55,6 +58,7 @@ public class LlmProviderBootstrapService {
           .apiKeyNonce(encrypted.nonce())
           .apiKeyCiphertext(encrypted.ciphertext())
           .model(config.getModel())
+          .apiType(resolveApiType(config.getApiType()))
           .embeddingModel(trimOrNull(config.getEmbeddingModel()))
           .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
           .supportsEmbedding(supportsEmbedding)
@@ -65,6 +69,75 @@ public class LlmProviderBootstrapService {
       providerRepository.save(entity);
     });
     log.info("Seeded {} LLM providers from application configuration", providerRepository.count());
+  }
+
+  private void syncConfiguredBuiltinProviders() {
+    Map<String, ProviderConfig> providers = properties.getProviders();
+    if (providers == null || providers.isEmpty()) {
+      return;
+    }
+
+    providers.forEach((id, config) -> {
+      if (isBlank(id) || config == null || isBlank(config.getBaseUrl()) || isBlank(config.getModel())) {
+        return;
+      }
+      providerRepository.findById(id).ifPresentOrElse(
+          existing -> syncExistingBuiltinProvider(id, config, existing),
+          () -> seedMissingBuiltinProvider(id, config)
+      );
+    });
+  }
+
+  private void syncExistingBuiltinProvider(
+      String id,
+      ProviderConfig config,
+      LlmProviderEntity existing) {
+    if (!existing.isBuiltin()) {
+      return;
+    }
+
+    boolean changed = false;
+    ProviderApiType configuredApiType = resolveApiType(config.getApiType());
+    if (existing.getApiType() == null) {
+      existing.setApiType(configuredApiType);
+      changed = true;
+    }
+
+    String configuredApiKey = trimOrNull(config.getApiKey());
+    if (configuredApiKey != null && isBlank(decryptApiKey(existing))) {
+      ApiKeyEncryptionService.EncryptedValue encrypted = encryptionService.encrypt(configuredApiKey);
+      existing.setApiKeyNonce(encrypted.nonce());
+      existing.setApiKeyCiphertext(encrypted.ciphertext());
+      changed = true;
+      log.info("Synced API key for builtin provider from configuration: id={}", id);
+    }
+
+    if (changed) {
+      providerRepository.save(existing);
+    }
+  }
+
+  private void seedMissingBuiltinProvider(String id, ProviderConfig config) {
+    ApiKeyEncryptionService.EncryptedValue encrypted =
+        encryptionService.encrypt(config.getApiKey() != null ? config.getApiKey() : "");
+    boolean supportsEmbedding = Boolean.TRUE.equals(config.getSupportsEmbedding())
+        || !isBlank(config.getEmbeddingModel());
+
+    providerRepository.save(LlmProviderEntity.builder()
+        .id(id)
+        .baseUrl(config.getBaseUrl())
+        .apiKeyNonce(encrypted.nonce())
+        .apiKeyCiphertext(encrypted.ciphertext())
+        .model(config.getModel())
+        .apiType(resolveApiType(config.getApiType()))
+        .embeddingModel(trimOrNull(config.getEmbeddingModel()))
+        .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
+        .supportsEmbedding(supportsEmbedding)
+        .temperature(config.getTemperature())
+        .enabled(true)
+        .builtin(true)
+        .build());
+    log.info("Seeded missing builtin LLM provider from application configuration: id={}", id);
   }
 
   private void ensureGlobalSetting() {
@@ -118,6 +191,14 @@ public class LlmProviderBootstrapService {
       return configuredDimensions;
     }
     return properties.getEmbeddingDimensions();
+  }
+
+  private ProviderApiType resolveApiType(ProviderApiType apiType) {
+    return ProviderApiType.resolve(apiType);
+  }
+
+  private String decryptApiKey(LlmProviderEntity provider) {
+    return encryptionService.decrypt(provider.getApiKeyNonce(), provider.getApiKeyCiphertext());
   }
 
   private String trimOrNull(String value) {

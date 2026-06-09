@@ -1,5 +1,6 @@
 package interview.guide.common.config;
 
+import interview.guide.common.ai.ProviderApiType;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,7 @@ public class LlmProviderProperties {
         private String baseUrl;
         private String apiKey;
         private String model;
+        private ProviderApiType apiType = ProviderApiType.OPENAI_CHAT_COMPLETIONS;
         private String embeddingModel;
         private Integer embeddingDimensions;
         private Boolean supportsEmbedding;

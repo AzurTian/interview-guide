@@ -1,7 +1,9 @@
 package interview.guide.modules.llmprovider.service;
 
 import interview.guide.common.ai.ApiPathResolver;
+import interview.guide.common.ai.ApiKeySanitizer;
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.ai.ProviderApiType;
 import interview.guide.common.config.LlmProviderProperties;
 import interview.guide.common.config.LlmProviderProperties.ProviderConfig;
 import interview.guide.common.exception.BusinessException;
@@ -25,6 +27,7 @@ import interview.guide.modules.voiceinterview.service.QwenTtsService;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -146,6 +149,7 @@ public class LlmProviderConfigService {
                 .baseUrl(e.getValue().getBaseUrl())
                 .maskedApiKey(maskApiKey(e.getValue().getApiKey()))
                 .model(e.getValue().getModel())
+                .apiType(resolveApiType(e.getValue().getApiType()))
                 .embeddingModel(e.getValue().getEmbeddingModel())
                 .embeddingDimensions(resolveEmbeddingDimensions(e.getValue().getEmbeddingDimensions()))
                 .supportsEmbedding(Boolean.TRUE.equals(e.getValue().getSupportsEmbedding())
@@ -163,6 +167,7 @@ public class LlmProviderConfigService {
               .baseUrl(provider.getBaseUrl())
               .maskedApiKey(maskApiKey(decryptApiKey(provider)))
               .model(provider.getModel())
+              .apiType(resolveApiType(provider.getApiType()))
               .embeddingModel(provider.getEmbeddingModel())
               .embeddingDimensions(resolveEmbeddingDimensions(provider.getEmbeddingDimensions()))
               .supportsEmbedding(provider.isSupportsEmbedding())
@@ -186,6 +191,7 @@ public class LlmProviderConfigService {
             .baseUrl(config.getBaseUrl())
             .maskedApiKey(maskApiKey(config.getApiKey()))
             .model(config.getModel())
+            .apiType(resolveApiType(config.getApiType()))
             .embeddingModel(config.getEmbeddingModel())
             .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
             .supportsEmbedding(Boolean.TRUE.equals(config.getSupportsEmbedding())
@@ -202,6 +208,7 @@ public class LlmProviderConfigService {
           .baseUrl(provider.getBaseUrl())
           .maskedApiKey(maskApiKey(decryptApiKey(provider)))
           .model(provider.getModel())
+          .apiType(resolveApiType(provider.getApiType()))
           .embeddingModel(provider.getEmbeddingModel())
           .embeddingDimensions(resolveEmbeddingDimensions(provider.getEmbeddingDimensions()))
           .supportsEmbedding(provider.isSupportsEmbedding())
@@ -329,6 +336,7 @@ public class LlmProviderConfigService {
       String baseUrl = requireNonBlank(request.baseUrl(), "baseUrl");
       String model = requireNonBlank(request.model(), "model");
       String apiKey = requireNonBlank(request.apiKey(), "apiKey");
+      ProviderApiType apiType = resolveApiType(request.apiType());
       String embeddingModel = trimOrNull(request.embeddingModel());
       Integer embeddingDimensions = resolveEmbeddingDimensions(request.embeddingDimensions());
       boolean supportsEmbedding = request.supportsEmbedding() != null
@@ -343,6 +351,7 @@ public class LlmProviderConfigService {
           .apiKeyNonce(encrypted.nonce())
           .apiKeyCiphertext(encrypted.ciphertext())
           .model(model)
+          .apiType(apiType)
           .embeddingModel(embeddingModel)
           .embeddingDimensions(embeddingDimensions)
           .supportsEmbedding(supportsEmbedding)
@@ -382,6 +391,7 @@ public class LlmProviderConfigService {
 
       if (trimmedBaseUrl != null) provider.setBaseUrl(trimmedBaseUrl);
       if (trimmedModel != null) provider.setModel(trimmedModel);
+      if (request.apiType() != null) provider.setApiType(request.apiType());
       if (request.embeddingModel() != null) {
         provider.setEmbeddingModel(trimOrNull(request.embeddingModel()));
       }
@@ -589,6 +599,7 @@ public class LlmProviderConfigService {
     config.setBaseUrl(request.baseUrl());
     config.setApiKey(request.apiKey());
     config.setModel(request.model());
+    config.setApiType(resolveApiType(request.apiType()));
     config.setEmbeddingModel(request.embeddingModel());
     config.setEmbeddingDimensions(request.embeddingDimensions());
     config.setSupportsEmbedding(request.supportsEmbedding());
@@ -618,6 +629,9 @@ public class LlmProviderConfigService {
 
     if (trimmedBaseUrl != null) config.setBaseUrl(trimmedBaseUrl);
     if (trimmedModel != null) config.setModel(trimmedModel);
+    if (request.apiType() != null) {
+      config.setApiType(request.apiType());
+    }
     if (request.embeddingModel() != null) {
       config.setEmbeddingModel(trimOrNull(request.embeddingModel()));
     }
@@ -668,6 +682,7 @@ public class LlmProviderConfigService {
         config.getBaseUrl(),
         config.getApiKey(),
         config.getModel(),
+        resolveApiType(config.getApiType()),
         config.getEmbeddingModel(),
         resolveEmbeddingDimensions(config.getEmbeddingDimensions()),
         Boolean.TRUE.equals(config.getSupportsEmbedding()) || trimOrNull(config.getEmbeddingModel()) != null,
@@ -693,6 +708,7 @@ public class LlmProviderConfigService {
         provider.getBaseUrl(),
         decryptApiKey(provider),
         provider.getModel(),
+        resolveApiType(provider.getApiType()),
         provider.getEmbeddingModel(),
         resolveEmbeddingDimensions(provider.getEmbeddingDimensions()),
         provider.isSupportsEmbedding(),
@@ -723,26 +739,87 @@ public class LlmProviderConfigService {
   }
 
   private List<String> buildConnectivityTestUrls(String baseUrl) {
+    return buildConnectivityTestUrls(ProviderApiType.OPENAI_CHAT_COMPLETIONS, baseUrl);
+  }
+
+  private List<String> buildConnectivityTestUrls(ProviderApiType apiType, String baseUrl) {
     String normalizedBaseUrl = ApiPathResolver.stripTrailingSlashes(baseUrl);
     LinkedHashSet<String> candidateUrls = new LinkedHashSet<>();
 
-    candidateUrls.add(normalizedBaseUrl + "/chat/completions");
-    if (!ApiPathResolver.baseUrlContainsVersion(normalizedBaseUrl)) {
-      candidateUrls.add(normalizedBaseUrl + "/v1/chat/completions");
+    switch (resolveApiType(apiType)) {
+      case OPENAI_CHAT_COMPLETIONS -> {
+        candidateUrls.add(normalizedBaseUrl + "/chat/completions");
+        if (!ApiPathResolver.baseUrlContainsVersion(normalizedBaseUrl)) {
+          candidateUrls.add(normalizedBaseUrl + "/v1/chat/completions");
+        }
+      }
+      case OPENAI_RESPONSES -> {
+        if (normalizedBaseUrl.endsWith("/responses")) {
+          candidateUrls.add(normalizedBaseUrl);
+        } else {
+          candidateUrls.add(normalizedBaseUrl + "/responses");
+          if (!ApiPathResolver.baseUrlContainsVersion(normalizedBaseUrl)) {
+            candidateUrls.add(normalizedBaseUrl + "/v1/responses");
+          }
+        }
+      }
+      case ANTHROPIC_MESSAGES -> {
+        if (normalizedBaseUrl.endsWith("/messages")) {
+          candidateUrls.add(normalizedBaseUrl);
+        } else if (normalizedBaseUrl.endsWith("/v1")) {
+          candidateUrls.add(normalizedBaseUrl + "/messages");
+        } else {
+          candidateUrls.add(normalizedBaseUrl + "/v1/messages");
+        }
+      }
     }
 
     return List.copyOf(candidateUrls);
   }
 
   private Map<String, Object> buildConnectivityTestRequestBody(String model) {
+    return buildConnectivityTestRequestBody(ProviderApiType.OPENAI_CHAT_COMPLETIONS, model);
+  }
+
+  private Map<String, Object> buildConnectivityTestRequestBody(ProviderApiType apiType, String model) {
     Map<String, Object> requestBody = new LinkedHashMap<>();
-    requestBody.put("model", model);
-    requestBody.put("messages", List.of(Map.of(
-        "role", "user",
-        "content", "Reply with OK only."
-    )));
-    requestBody.put("max_tokens", 1);
+    switch (resolveApiType(apiType)) {
+      case OPENAI_CHAT_COMPLETIONS -> {
+        requestBody.put("model", model);
+        requestBody.put("messages", List.of(Map.of(
+            "role", "user",
+            "content", "Reply with OK only."
+        )));
+        requestBody.put("max_tokens", 1);
+      }
+      case OPENAI_RESPONSES -> {
+        requestBody.put("model", model);
+        requestBody.put("input", "Reply with OK only.");
+        requestBody.put("max_output_tokens", 1);
+      }
+      case ANTHROPIC_MESSAGES -> {
+        requestBody.put("model", model);
+        requestBody.put("max_tokens", 1);
+        requestBody.put("messages", List.of(Map.of(
+            "role", "user",
+            "content", "Reply with OK only."
+        )));
+      }
+    }
     return requestBody;
+  }
+
+  private HttpHeaders buildConnectivityTestHeaders(ProviderApiType apiType, String apiKey) {
+    HttpHeaders headers = new HttpHeaders();
+    switch (resolveApiType(apiType)) {
+      case OPENAI_CHAT_COMPLETIONS, OPENAI_RESPONSES ->
+          headers.setBearerAuth(ApiKeySanitizer.requirePresent(apiKey, "Provider"));
+      case ANTHROPIC_MESSAGES -> {
+        headers.set("x-api-key", ApiKeySanitizer.requirePresent(apiKey, "Provider"));
+        headers.set("anthropic-version", "2023-06-01");
+      }
+    }
+    return headers;
   }
 
   private String trimOrNull(String value) {
@@ -759,6 +836,10 @@ public class LlmProviderConfigService {
       throw new BusinessException(ErrorCode.BAD_REQUEST, fieldName + " 不能为空");
     }
     return normalized;
+  }
+
+  private ProviderApiType resolveApiType(ProviderApiType apiType) {
+    return ProviderApiType.resolve(apiType);
   }
 
   private void validateEmbeddingConfig(
@@ -817,24 +898,26 @@ public class LlmProviderConfigService {
       requestFactory.setReadTimeout(10000);
 
       RestClient restClient = RestClient.builder()
-          .defaultHeader("Authorization", "Bearer " + config.apiKey())
           .requestFactory(requestFactory)
           .build();
 
-      Map<String, Object> requestBody = buildConnectivityTestRequestBody(config.model());
+      Map<String, Object> requestBody =
+          buildConnectivityTestRequestBody(config.apiType(), config.model());
 
-      List<String> candidateUrls = buildConnectivityTestUrls(config.baseUrl());
+      List<String> candidateUrls = buildConnectivityTestUrls(config.apiType(), config.baseUrl());
       String lastFailureMessage = "Unknown error";
 
       for (String targetUrl : candidateUrls) {
         try {
           restClient.post()
               .uri(URI.create(targetUrl))
+              .headers(headers -> headers.addAll(
+                  buildConnectivityTestHeaders(config.apiType(), config.apiKey())))
               .body(requestBody)
               .retrieve()
               .toEntity(String.class);
-          log.info("Provider connectivity test succeeded: providerId={}, baseUrl={}, targetUrl={}, model={}",
-              id, config.baseUrl(), targetUrl, config.model());
+          log.info("Provider connectivity test succeeded: providerId={}, apiType={}, baseUrl={}, targetUrl={}, model={}",
+              id, config.apiType(), config.baseUrl(), targetUrl, config.model());
           return ProviderTestResult.builder()
               .success(true)
               .message("连接成功")
@@ -849,8 +932,9 @@ public class LlmProviderConfigService {
               responseBody
           );
           log.warn(
-              "Provider connectivity test failed with response: providerId={}, baseUrl={}, targetUrl={}, model={}, status={}, body={}",
+              "Provider connectivity test failed with response: providerId={}, apiType={}, baseUrl={}, targetUrl={}, model={}, status={}, body={}",
               id,
+              config.apiType(),
               config.baseUrl(),
               targetUrl,
               config.model(),
@@ -866,8 +950,9 @@ public class LlmProviderConfigService {
               e.getMessage()
           );
           log.warn(
-              "Provider connectivity test failed: providerId={}, baseUrl={}, targetUrl={}, model={}, error={}",
+              "Provider connectivity test failed: providerId={}, apiType={}, baseUrl={}, targetUrl={}, model={}, error={}",
               id,
+              config.apiType(),
               config.baseUrl(),
               targetUrl,
               config.model(),
@@ -882,8 +967,8 @@ public class LlmProviderConfigService {
           .model(config.model())
           .build();
     } catch (Exception e) {
-      log.warn("Provider connectivity test setup failed: providerId={}, baseUrl={}, model={}, error={}",
-          id, config.baseUrl(), config.model(), e.getMessage(), e);
+      log.warn("Provider connectivity test setup failed: providerId={}, apiType={}, baseUrl={}, model={}, error={}",
+          id, config.apiType(), config.baseUrl(), config.model(), e.getMessage(), e);
       return ProviderTestResult.builder()
           .success(false)
           .message("连接失败: " + e.getMessage())
@@ -900,6 +985,7 @@ public class LlmProviderConfigService {
       values.put("base-url", config.getBaseUrl());
       values.put("api-key", "${" + envKey + "}");
       values.put("model", config.getModel());
+      values.put("api-type", resolveApiType(config.getApiType()));
       if (config.getEmbeddingModel() != null) {
         values.put("embedding-model", config.getEmbeddingModel());
       }
@@ -1185,6 +1271,7 @@ public class LlmProviderConfigService {
       String baseUrl,
       String apiKey,
       String model,
+      ProviderApiType apiType,
       String embeddingModel,
       Integer embeddingDimensions,
       boolean supportsEmbedding,

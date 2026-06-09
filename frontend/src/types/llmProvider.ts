@@ -1,8 +1,11 @@
+export type ProviderApiType = 'OPENAI_CHAT_COMPLETIONS' | 'OPENAI_RESPONSES' | 'ANTHROPIC_MESSAGES';
+
 export interface ProviderItem {
   id: string;
   baseUrl: string;
   maskedApiKey: string;
   model: string;
+  apiType: ProviderApiType;
   embeddingModel: string | null;
   embeddingDimensions: number | null;
   supportsEmbedding: boolean;
@@ -16,6 +19,7 @@ export interface CreateProviderRequest {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiType?: ProviderApiType;
   embeddingModel?: string;
   embeddingDimensions?: number;
   supportsEmbedding?: boolean;
@@ -26,6 +30,7 @@ export interface UpdateProviderRequest {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+  apiType?: ProviderApiType;
   embeddingModel?: string;
   embeddingDimensions?: number;
   supportsEmbedding?: boolean;

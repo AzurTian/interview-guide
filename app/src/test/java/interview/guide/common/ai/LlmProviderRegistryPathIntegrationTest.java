@@ -86,6 +86,21 @@ class LlmProviderRegistryPathIntegrationTest {
     return new LlmProviderRegistry(properties, toolCallingManager, null, null);
   }
 
+  private LlmProviderRegistry buildRegistryFor(String baseUrl, ProviderApiType apiType) {
+    LlmProviderProperties properties = new LlmProviderProperties();
+    ProviderConfig config = new ProviderConfig();
+    config.setBaseUrl(baseUrl);
+    config.setApiKey("test-key");
+    config.setModel("test-model");
+    config.setApiType(apiType);
+    Map<String, ProviderConfig> providers = new HashMap<>();
+    providers.put("probe", config);
+    properties.setProviders(providers);
+    properties.setDefaultProvider("probe");
+    ToolCallingManager toolCallingManager = DefaultToolCallingManager.builder().build();
+    return new LlmProviderRegistry(properties, toolCallingManager, null, null);
+  }
+
   @Test
   @DisplayName("base-url 以 /v1 结尾时请求路径不应出现重复 /v1")
   void baseUrlWithV1_noDoubleVersion() {
@@ -123,5 +138,31 @@ class LlmProviderRegistryPathIntegrationTest {
 
     assertThat(receivedPaths).hasSize(1);
     assertThat(receivedPaths.get(0)).isEqualTo("/api/v3/chat/completions");
+  }
+
+  @Test
+  @DisplayName("Responses provider 通过 ChatClient 调用 /responses")
+  void responsesProviderUsesResponsesPath() {
+    LlmProviderRegistry registry = buildRegistryFor(
+        "http://127.0.0.1:" + port + "/v1", ProviderApiType.OPENAI_RESPONSES);
+
+    ChatClient client = registry.getChatClient("probe");
+    client.prompt("hi").call().content();
+
+    assertThat(receivedPaths).hasSize(1);
+    assertThat(receivedPaths.get(0)).isEqualTo("/v1/responses");
+  }
+
+  @Test
+  @DisplayName("Anthropic provider 通过 ChatClient 调用 /v1/messages")
+  void anthropicProviderUsesMessagesPath() {
+    LlmProviderRegistry registry = buildRegistryFor(
+        "http://127.0.0.1:" + port, ProviderApiType.ANTHROPIC_MESSAGES);
+
+    ChatClient client = registry.getChatClient("probe");
+    client.prompt("hi").call().content();
+
+    assertThat(receivedPaths).hasSize(1);
+    assertThat(receivedPaths.get(0)).isEqualTo("/v1/messages");
   }
 }

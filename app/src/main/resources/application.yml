@@ -27,7 +27,10 @@ springdoc:
 
 spring:
   config:
-    import: optional:classpath:voice-interview-opening.yml
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+      - optional:classpath:voice-interview-opening.yml
   application:
     name: ai-interview-platform
 
@@ -91,8 +94,8 @@ spring:
 # Application custom configuration
 app:
   ai:
-    default-provider: dashscope
-    default-embedding-provider: dashscope
+    default-provider: mine
+    default-embedding-provider: mine
     embedding-dimensions: ${APP_AI_EMBEDDING_DIMENSIONS:1024}
     security:
       api-key-encryption-key: ${APP_AI_CONFIG_ENCRYPTION_KEY:}
@@ -104,6 +107,13 @@ app:
     agent-utils:
       skills-root: ${APP_AI_AGENT_UTILS_SKILLS_ROOT:classpath:skills}
     providers:
+      mine:
+        base-url: https://muyuan.do/v1
+        api-key: ${PROVIDER_MINE_API_KEY:}
+        model: ${PROVIDER_MINE_MODEL:gpt-5.5}
+        embedding-model: embedding-3
+        embedding-dimensions: 1024
+        supports-embedding: true
       dashscope:
         base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
         api-key: ${AI_BAILIAN_API_KEY}
@@ -182,9 +192,9 @@ app:
 
   # RustFS (S3兼容) 存储配置
   storage:
-    endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
-    access-key: ${APP_STORAGE_ACCESS_KEY:minioadmin}
-    secret-key: ${APP_STORAGE_SECRET_KEY:minioadmin}
+    endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9001}
+    access-key: ${APP_STORAGE_ACCESS_KEY:rustfsadmin}
+    secret-key: ${APP_STORAGE_SECRET_KEY:rustfsadmin}
     bucket: ${APP_STORAGE_BUCKET:interview-guide}
     region: ${APP_STORAGE_REGION:us-east-1}
   

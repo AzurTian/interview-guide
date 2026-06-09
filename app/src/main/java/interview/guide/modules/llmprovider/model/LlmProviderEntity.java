@@ -1,7 +1,10 @@
 package interview.guide.modules.llmprovider.model;
 
+import interview.guide.common.ai.ProviderApiType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -36,6 +39,11 @@ public class LlmProviderEntity {
   @Column(nullable = false, length = 128)
   private String model;
 
+  @Enumerated(EnumType.STRING)
+  @Column(name = "api_type", length = 48)
+  @Builder.Default
+  private ProviderApiType apiType = ProviderApiType.OPENAI_CHAT_COMPLETIONS;
+
   @Column(name = "embedding_model", length = 128)
   private String embeddingModel;
 
@@ -64,10 +72,12 @@ public class LlmProviderEntity {
     LocalDateTime now = LocalDateTime.now();
     createdAt = now;
     updatedAt = now;
+    apiType = ProviderApiType.resolve(apiType);
   }
 
   @PreUpdate
   void preUpdate() {
     updatedAt = LocalDateTime.now();
+    apiType = ProviderApiType.resolve(apiType);
   }
 }
