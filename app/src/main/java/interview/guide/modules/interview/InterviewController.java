@@ -4,6 +4,7 @@ import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
+import interview.guide.modules.interview.model.InterviewEvaluationStatusDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.SessionListItemDTO;
@@ -143,6 +144,15 @@ public class InterviewController {
         log.info("提前交卷: {}", sessionId);
         sessionService.completeInterview(sessionId);
         return Result.success(null);
+    }
+
+    /**
+     * 重新评估面试记录
+     */
+    @PostMapping("/api/interview/sessions/{sessionId}/reevaluate")
+    public Result<InterviewEvaluationStatusDTO> reevaluateInterview(@PathVariable String sessionId) {
+        log.info("重新评估面试: {}", sessionId);
+        return Result.success(sessionService.reevaluateInterview(sessionId));
     }
     
     /**

@@ -10,6 +10,8 @@ import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
@@ -41,6 +43,8 @@ public class StructuredOutputInvoker {
     private final boolean retryAppendStrictJsonInstruction;
     private final int errorMessageMaxLength;
     private final boolean metricsEnabled;
+    private final boolean streamEnabled;
+    private final Duration streamTimeout;
     private final MeterRegistry meterRegistry;
 
     public StructuredOutputInvoker(
@@ -53,6 +57,10 @@ public class StructuredOutputInvoker {
         this.retryAppendStrictJsonInstruction = properties.isStructuredRetryAppendStrictJsonInstruction();
         this.errorMessageMaxLength = Math.max(20, properties.getStructuredErrorMessageMaxLength());
         this.metricsEnabled = properties.isStructuredMetricsEnabled();
+        this.streamEnabled = properties.isStructuredStreamEnabled();
+        this.streamTimeout = Duration.ofSeconds(
+            Math.max(30, properties.getStructuredStreamTimeoutSeconds())
+        );
         this.meterRegistry = meterRegistry;
     }
 
@@ -76,11 +84,7 @@ public class StructuredOutputInvoker {
                 ? securedSystemPrompt
                 : buildRetrySystemPrompt(securedSystemPrompt, lastError);
             try {
-                String content = chatClient.prompt()
-                    .system(attemptSystemPrompt)
-                    .user(userPrompt)
-                    .call()
-                    .content();
+                String content = invokeContent(chatClient, attemptSystemPrompt, userPrompt);
                 T result = convertWithRepair(content, outputConverter, logContext, log);
                 recordAttempt(contextTag, STATUS_SUCCESS);
                 recordInvocation(contextTag, STATUS_SUCCESS, startNanos);
@@ -103,6 +107,25 @@ public class StructuredOutputInvoker {
             errorCode,
             errorPrefix + (lastError != null ? lastError.getMessage() : "unknown")
         );
+    }
+
+    private String invokeContent(ChatClient chatClient, String systemPrompt, String userPrompt) {
+        ChatClient.ChatClientRequestSpec request = chatClient.prompt()
+            .system(systemPrompt)
+            .user(userPrompt);
+        if (!streamEnabled) {
+            return request.call().content();
+        }
+
+        List<String> chunks = request.stream()
+            .content()
+            .collectList()
+            .block(streamTimeout);
+        String content = chunks != null ? String.join("", chunks) : "";
+        if (content.isBlank()) {
+            throw new BusinessException(ErrorCode.AI_SERVICE_ERROR, "流式结构化输出为空");
+        }
+        return content;
     }
 
     private <T> T convertWithRepair(

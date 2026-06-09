@@ -215,4 +215,13 @@ public class VoiceInterviewController {
                 .evaluateStatus(AsyncTaskStatus.PENDING.name())
                 .build());
     }
+
+    /**
+     * Trigger async re-evaluation for a completed session.
+     */
+    @PostMapping("/sessions/{sessionId}/reevaluate")
+    public Result<VoiceEvaluationStatusDTO> reevaluateSession(@PathVariable Long sessionId) {
+        log.info("Triggering async re-evaluation for session: {}", sessionId);
+        return Result.success(voiceInterviewService.reevaluateSession(sessionId));
+    }
 }

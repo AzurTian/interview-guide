@@ -22,6 +22,11 @@ export interface TextSessionMeta {
   completedAt: string | null;
 }
 
+export interface EvaluationStatusResponse {
+  evaluateStatus: string | null;
+  evaluateError?: string | null;
+}
+
 export const interviewApi = {
   /**
    * 列出所有文字面试会话
@@ -102,5 +107,14 @@ export const interviewApi = {
    */
   async completeInterview(sessionId: string): Promise<void> {
     return request.post<void>(`/api/interview/sessions/${sessionId}/complete`);
+  },
+
+  /**
+   * 重新评估面试记录
+   */
+  async reevaluate(sessionId: string): Promise<EvaluationStatusResponse> {
+    return request.post<EvaluationStatusResponse>(
+      `/api/interview/sessions/${sessionId}/reevaluate`
+    );
   },
 };

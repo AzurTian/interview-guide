@@ -167,17 +167,19 @@ public class VoiceInterviewEvaluationService {
             List<EvaluationReport.QuestionEvaluation> questionItems = report.questionDetails();
             List<EvaluationReport.ReferenceAnswer> refAnswerItems = report.referenceAnswers();
 
-            VoiceInterviewEvaluationEntity entity = VoiceInterviewEvaluationEntity.builder()
-                .sessionId(sessionId)
-                .overallScore(report.overallScore())
-                .overallFeedback(report.overallFeedback())
-                .questionEvaluationsJson(objectMapper.writeValueAsString(questionItems))
-                .strengthsJson(objectMapper.writeValueAsString(report.strengths()))
-                .improvementsJson(objectMapper.writeValueAsString(report.improvements()))
-                .referenceAnswersJson(objectMapper.writeValueAsString(refAnswerItems))
-                .interviewerRole(session.getRoleType())
-                .interviewDate(session.getStartTime())
-                .build();
+            VoiceInterviewEvaluationEntity entity = evaluationRepository.findBySessionId(sessionId)
+                .orElseGet(() -> VoiceInterviewEvaluationEntity.builder()
+                    .sessionId(sessionId)
+                    .build());
+
+            entity.setOverallScore(report.overallScore());
+            entity.setOverallFeedback(report.overallFeedback());
+            entity.setQuestionEvaluationsJson(objectMapper.writeValueAsString(questionItems));
+            entity.setStrengthsJson(objectMapper.writeValueAsString(report.strengths()));
+            entity.setImprovementsJson(objectMapper.writeValueAsString(report.improvements()));
+            entity.setReferenceAnswersJson(objectMapper.writeValueAsString(refAnswerItems));
+            entity.setInterviewerRole(session.getRoleType());
+            entity.setInterviewDate(session.getStartTime());
 
             evaluationRepository.save(entity);
             log.info("评估结果已保存: sessionId={}, score={}", sessionId, entity.getOverallScore());

@@ -11,6 +11,7 @@ import interview.guide.modules.interview.listener.EvaluateStreamProducer;
 import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.HistoricalQuestion;
 import interview.guide.modules.interview.model.InterviewAnswerEntity;
+import interview.guide.modules.interview.model.InterviewEvaluationStatusDTO;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
@@ -421,6 +422,30 @@ public class InterviewSessionService {
         evaluateStreamProducer.sendEvaluateTask(sessionId);
 
         log.info("会话 {} 提前交卷，评估任务已入队", sessionId);
+    }
+
+    /**
+     * 重新评估已完成的文字面试。
+     */
+    public InterviewEvaluationStatusDTO reevaluateInterview(String sessionId) {
+        InterviewSessionEntity session = persistenceService.findBySessionId(sessionId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND));
+
+        AsyncTaskStatus currentStatus = session.getEvaluateStatus();
+        if (currentStatus == AsyncTaskStatus.PENDING || currentStatus == AsyncTaskStatus.PROCESSING) {
+            return new InterviewEvaluationStatusDTO(currentStatus.name(), session.getEvaluateError());
+        }
+
+        if (session.getStatus() != InterviewSessionEntity.SessionStatus.COMPLETED
+            && session.getStatus() != InterviewSessionEntity.SessionStatus.EVALUATED) {
+            throw new BusinessException(ErrorCode.INTERVIEW_NOT_COMPLETED, "面试尚未完成，无法重新评估");
+        }
+
+        persistenceService.updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
+        evaluateStreamProducer.sendEvaluateTask(sessionId);
+        log.info("文字面试重新评估任务已入队: sessionId={}", sessionId);
+
+        return new InterviewEvaluationStatusDTO(AsyncTaskStatus.PENDING.name(), null);
     }
 
     /**

@@ -155,15 +155,47 @@ public class UnifiedEvaluationService {
         for (int start = 0; start < qaRecords.size(); start += evaluationBatchSize) {
             int end = Math.min(start + evaluationBatchSize, qaRecords.size());
             List<QaRecord> batch = qaRecords.subList(start, end);
-            BatchReportDTO report = evaluateBatch(chatClient, sessionId, resumeContext, referenceContext, batch);
-            results.add(new BatchResult(start, end, report));
+            results.addAll(evaluateBatchWithSplitFallback(
+                chatClient, sessionId, resumeContext, referenceContext, batch, start
+            ));
         }
         return results;
     }
 
+    private List<BatchResult> evaluateBatchWithSplitFallback(
+            ChatClient chatClient, String sessionId, String resumeContext, String referenceContext,
+            List<QaRecord> batch, int startIndex) {
+        try {
+            BatchReportDTO report = evaluateBatch(
+                chatClient, sessionId, resumeContext, referenceContext, batch
+            );
+            return List.of(new BatchResult(startIndex, startIndex + batch.size(), report));
+        } catch (Exception e) {
+            log.error("批次评估失败: sessionId={}, batchSize={}, error={}",
+                sessionId, batch.size(), e.getMessage(), e);
+            if (batch.size() <= 1) {
+                return List.of(new BatchResult(startIndex, startIndex + batch.size(), null));
+            }
+
+            int split = batch.size() / 2;
+            log.warn("批次评估失败，拆分为更小批次重试: sessionId={}, batchSize={}, left={}, right={}",
+                sessionId, batch.size(), split, batch.size() - split);
+            List<BatchResult> results = new ArrayList<>();
+            results.addAll(evaluateBatchWithSplitFallback(
+                chatClient, sessionId, resumeContext, referenceContext,
+                batch.subList(0, split), startIndex
+            ));
+            results.addAll(evaluateBatchWithSplitFallback(
+                chatClient, sessionId, resumeContext, referenceContext,
+                batch.subList(split, batch.size()), startIndex + split
+            ));
+            return results;
+        }
+    }
+
     private BatchReportDTO evaluateBatch(ChatClient chatClient, String sessionId,
-                                          String resumeContext, String referenceContext,
-                                          List<QaRecord> batch) {
+                                         String resumeContext, String referenceContext,
+                                         List<QaRecord> batch) {
         String qaRecords = buildQARecords(batch);
         String systemPrompt = systemPromptTemplate.render();
 
@@ -175,17 +207,10 @@ public class UnifiedEvaluationService {
         String userPrompt = userPromptTemplate.render(variables);
 
         String systemPromptWithFormat = systemPrompt + "\n\n" + outputConverter.getFormat();
-        try {
-            return structuredOutputInvoker.invoke(
-                chatClient, systemPromptWithFormat, userPrompt, outputConverter,
-                ErrorCode.INTERVIEW_EVALUATION_FAILED, "批次评估失败：", "批次评估", log
-            );
-        } catch (Exception e) {
-            log.error("批次评估失败: sessionId={}, batchSize={}, error={}",
-                sessionId, batch.size(), e.getMessage(), e);
-            // 返回空报告，让合并逻辑用零分兜底
-            return null;
-        }
+        return structuredOutputInvoker.invoke(
+            chatClient, systemPromptWithFormat, userPrompt, outputConverter,
+            ErrorCode.INTERVIEW_EVALUATION_FAILED, "批次评估失败：", "批次评估", log
+        );
     }
 
     private String buildQARecords(List<QaRecord> batch) {

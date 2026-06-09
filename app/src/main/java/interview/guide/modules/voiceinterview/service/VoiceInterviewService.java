@@ -10,6 +10,7 @@ import interview.guide.modules.voiceinterview.dto.CreateSessionRequest;
 import interview.guide.modules.voiceinterview.dto.VoiceInterviewMessageDTO;
 import interview.guide.modules.voiceinterview.dto.SessionMetaDTO;
 import interview.guide.modules.voiceinterview.dto.SessionResponseDTO;
+import interview.guide.modules.voiceinterview.dto.VoiceEvaluationStatusDTO;
 import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProducer;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
@@ -582,6 +583,39 @@ public class VoiceInterviewService {
     public void triggerEvaluation(Long sessionId) {
         updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
         voiceEvaluateStreamProducer.sendEvaluateTask(sessionId.toString());
+    }
+
+    /**
+     * Trigger async re-evaluation for a completed voice interview session.
+     */
+    public VoiceEvaluationStatusDTO reevaluateSession(Long sessionId) {
+        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND,
+                "会话不存在: " + sessionId));
+
+        AsyncTaskStatus currentStatus = session.getEvaluateStatus();
+        if (currentStatus == AsyncTaskStatus.PENDING || currentStatus == AsyncTaskStatus.PROCESSING) {
+            return VoiceEvaluationStatusDTO.builder()
+                .evaluateStatus(currentStatus.name())
+                .evaluateError(session.getEvaluateError())
+                .build();
+        }
+
+        if (session.getStatus() != VoiceInterviewSessionStatus.COMPLETED) {
+            throw new BusinessException(ErrorCode.VOICE_EVALUATION_FAILED, "语音面试尚未完成，无法重新评估");
+        }
+
+        session.setEvaluateStatus(AsyncTaskStatus.PENDING);
+        session.setEvaluateError(null);
+        sessionRepository.save(session);
+        invalidateSessionCache(sessionId);
+
+        voiceEvaluateStreamProducer.sendEvaluateTask(sessionId.toString());
+        log.info("Voice interview re-evaluation task queued: sessionId={}", sessionId);
+
+        return VoiceEvaluationStatusDTO.builder()
+            .evaluateStatus(AsyncTaskStatus.PENDING.name())
+            .build();
     }
 
     /**

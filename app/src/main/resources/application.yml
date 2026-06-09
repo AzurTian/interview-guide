@@ -168,6 +168,9 @@ app:
     structured-error-message-max-length: ${APP_AI_STRUCTURED_ERROR_MESSAGE_MAX_LENGTH:200}
     # 是否开启结构化输出调用指标（invocations/attempts/latency）
     structured-metrics-enabled: ${APP_AI_STRUCTURED_METRICS_ENABLED:true}
+    # 结构化输出默认使用流式聚合，避免长响应被中间网关按非流式请求超时截断
+    structured-stream-enabled: ${APP_AI_STRUCTURED_STREAM_ENABLED:true}
+    structured-stream-timeout-seconds: ${APP_AI_STRUCTURED_STREAM_TIMEOUT_SECONDS:300}
     rag:
       rewrite:
         enabled: ${APP_AI_RAG_REWRITE_ENABLED:true}

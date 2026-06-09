@@ -177,6 +177,7 @@ export default function InterviewHistoryPage({ onBack: _onBack, onViewInterview,
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [deleteItem, setDeleteItem] = useState<UnifiedInterviewItem | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
+  const [reevaluatingSessionId, setReevaluatingSessionId] = useState<string | null>(null);
   const pollingRef = useRef<number | null>(null);
   const skillsRef = useRef<SkillDTO[]>([]);
   const skillsLoadedRef = useRef(false);
@@ -314,6 +315,31 @@ export default function InterviewHistoryPage({ onBack: _onBack, onViewInterview,
   const handleDeleteClick = (item: UnifiedInterviewItem, e: React.MouseEvent) => {
     e.stopPropagation();
     setDeleteItem(item);
+  };
+
+  const canReevaluate = (item: UnifiedInterviewItem): boolean => {
+    if (isEvaluating(item)) return false;
+    if (item.type === 'text') return isCompletedStatus(item.status);
+    return item.status === 'COMPLETED' && !!item.voiceSessionId;
+  };
+
+  const handleReevaluate = async (item: UnifiedInterviewItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canReevaluate(item)) return;
+
+    setReevaluatingSessionId(item.sessionId);
+    try {
+      if (item.type === 'voice') {
+        await voiceInterviewApi.reevaluate(item.voiceSessionId!);
+      } else {
+        await interviewApi.reevaluate(item.sessionId);
+      }
+      await loadAll();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '重新评估失败，请稍后重试');
+    } finally {
+      setReevaluatingSessionId(null);
+    }
   };
 
   const handleDeleteConfirm = async () => {
@@ -572,6 +598,20 @@ export default function InterviewHistoryPage({ onBack: _onBack, onViewInterview,
                             ) : (
                               <Download className="w-4 h-4" />
                             )}
+                          </button>
+                        )}
+                        {canReevaluate(item) && (
+                          <button
+                            onClick={(e) => handleReevaluate(item, e)}
+                            disabled={reevaluatingSessionId === item.sessionId}
+                            className="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors disabled:opacity-50"
+                            title="重新评估"
+                          >
+                            <RefreshCw
+                              className={`w-4 h-4 ${
+                                reevaluatingSessionId === item.sessionId ? 'animate-spin' : ''
+                              }`}
+                            />
                           </button>
                         )}
                         {isEvaluateCompleted(item) && item.type === 'text' && item.resumeId && onRestartInterview && (

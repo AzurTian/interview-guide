@@ -202,6 +202,15 @@ export const voiceInterviewApi = {
   },
 
   /**
+   * 重新评估语音面试记录
+   */
+  async reevaluate(sessionId: number): Promise<EvaluationStatusResponse> {
+    return request.post<EvaluationStatusResponse>(
+      `/api/voice-interview/sessions/${sessionId}/reevaluate`
+    );
+  },
+
+  /**
    * Pause interview session
    */
   async pauseSession(sessionId: number, reason: string = 'user_initiated'): Promise<void> {

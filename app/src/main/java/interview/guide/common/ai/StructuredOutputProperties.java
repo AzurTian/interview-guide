@@ -15,4 +15,6 @@ public class StructuredOutputProperties {
     private boolean structuredRetryAppendStrictJsonInstruction = true;
     private int structuredErrorMessageMaxLength = 200;
     private boolean structuredMetricsEnabled = true;
+    private boolean structuredStreamEnabled = true;
+    private int structuredStreamTimeoutSeconds = 300;
 }
