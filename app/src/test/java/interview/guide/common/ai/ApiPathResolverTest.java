@@ -107,6 +107,42 @@ class ApiPathResolverTest {
   }
 
   @Nested
+  @DisplayName("resolveEmbeddingEndpoint")
+  class ResolveEmbeddingEndpoint {
+
+    @Test
+    @DisplayName("完整 embedding URL 拆分为 base-url 和 embeddings path")
+    void fullEmbeddingUrl() {
+      ApiPathResolver.EmbeddingEndpoint endpoint =
+          ApiPathResolver.resolveEmbeddingEndpoint("https://embed.example.com/api/v1/embeddings");
+
+      assertThat(endpoint.baseUrl()).isEqualTo("https://embed.example.com");
+      assertThat(endpoint.embeddingsPath()).isEqualTo("/api/v1/embeddings");
+    }
+
+    @Test
+    @DisplayName("端口和尾部斜杠被正确处理")
+    void portAndTrailingSlash() {
+      ApiPathResolver.EmbeddingEndpoint endpoint =
+          ApiPathResolver.resolveEmbeddingEndpoint("http://localhost:8080/v1/embeddings/");
+
+      assertThat(endpoint.baseUrl()).isEqualTo("http://localhost:8080");
+      assertThat(endpoint.embeddingsPath()).isEqualTo("/v1/embeddings");
+    }
+
+    @Test
+    @DisplayName("相对路径和无路径 URL 被拒绝")
+    void invalidUrls() {
+      org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+          ApiPathResolver.resolveEmbeddingEndpoint("/v1/embeddings"))
+          .isInstanceOf(IllegalArgumentException.class);
+      org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+          ApiPathResolver.resolveEmbeddingEndpoint("https://embed.example.com"))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Nested
   @DisplayName("buildOpenAiApi")
   class BuildOpenAiApi {
 

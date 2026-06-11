@@ -194,9 +194,12 @@ export default function SettingsPage() {
   const [formApiType, setFormApiType] = useState<ProviderApiType>('OPENAI_CHAT_COMPLETIONS');
   const [formEmbeddingModel, setFormEmbeddingModel] = useState('');
   const [formEmbeddingDimensions, setFormEmbeddingDimensions] = useState('1024');
+  const [formEmbeddingBaseUrl, setFormEmbeddingBaseUrl] = useState('');
+  const [formEmbeddingApiKey, setFormEmbeddingApiKey] = useState('');
   const [formSupportsEmbedding, setFormSupportsEmbedding] = useState(false);
   const [formTemperature, setFormTemperature] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showEmbeddingApiKey, setShowEmbeddingApiKey] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showEmbeddingDropdown, setShowEmbeddingDropdown] = useState(false);
 
@@ -286,8 +289,12 @@ export default function SettingsPage() {
     setFormApiType('OPENAI_CHAT_COMPLETIONS');
     setFormEmbeddingModel('');
     setFormEmbeddingDimensions('1024');
+    setFormEmbeddingBaseUrl('');
+    setFormEmbeddingApiKey('');
     setFormSupportsEmbedding(false);
+    setFormTemperature('');
     setShowApiKey(false);
+    setShowEmbeddingApiKey(false);
     setShowModal(true);
   };
 
@@ -300,9 +307,12 @@ export default function SettingsPage() {
     setFormApiType(provider.apiType ?? 'OPENAI_CHAT_COMPLETIONS');
     setFormEmbeddingModel(provider.embeddingModel || '');
     setFormEmbeddingDimensions(provider.embeddingDimensions != null ? String(provider.embeddingDimensions) : '1024');
+    setFormEmbeddingBaseUrl(provider.embeddingBaseUrl || '');
+    setFormEmbeddingApiKey('');
     setFormSupportsEmbedding(provider.supportsEmbedding);
     setFormTemperature(provider.temperature != null ? String(provider.temperature) : '');
     setShowApiKey(false);
+    setShowEmbeddingApiKey(false);
     setShowModal(true);
   };
 
@@ -339,6 +349,12 @@ export default function SettingsPage() {
       if (formEmbeddingModel.trim()) {
         data.embeddingModel = formEmbeddingModel.trim();
         data.embeddingDimensions = embeddingDimensions;
+      }
+      if (formSupportsEmbedding && formEmbeddingBaseUrl.trim()) {
+        data.embeddingBaseUrl = formEmbeddingBaseUrl.trim();
+      }
+      if (formSupportsEmbedding && formEmbeddingApiKey.trim()) {
+        data.embeddingApiKey = formEmbeddingApiKey.trim();
       }
       if (formTemperature.trim()) {
         const temp = parseFloat(formTemperature.trim());
@@ -378,10 +394,14 @@ export default function SettingsPage() {
         model: formModel.trim(),
         apiType: formApiType,
         embeddingModel: formEmbeddingModel.trim(),
+        embeddingBaseUrl: formSupportsEmbedding ? formEmbeddingBaseUrl.trim() : '',
         supportsEmbedding: formSupportsEmbedding,
       };
       if (formSupportsEmbedding) {
         data.embeddingDimensions = embeddingDimensions;
+        if (formEmbeddingApiKey.trim()) {
+          data.embeddingApiKey = formEmbeddingApiKey.trim();
+        }
       }
       if (formApiKey.trim()) {
         data.apiKey = formApiKey.trim();
@@ -694,6 +714,14 @@ export default function SettingsPage() {
                         {canUseEmbedding && (
                           <ConfigRow label="向量维度" value={`${provider.embeddingDimensions ?? 1024} 维`} emphasis={isEmbeddingDefault} />
                         )}
+                        {provider.embeddingBaseUrl && (
+                          <ConfigRow
+                            label="向量 URL"
+                            value={provider.embeddingBaseUrl}
+                            title={provider.embeddingBaseUrl}
+                            emphasis={isEmbeddingDefault}
+                          />
+                        )}
                         {provider.temperature != null && (
                           <ConfigRow label="温度" value={provider.temperature} />
                         )}
@@ -704,6 +732,15 @@ export default function SettingsPage() {
                           monospace
                           emphasis
                         />
+                        {provider.maskedEmbeddingApiKey && (
+                          <ConfigRow
+                            label="向量 Key"
+                            value={provider.maskedEmbeddingApiKey}
+                            title={provider.maskedEmbeddingApiKey}
+                            monospace
+                            emphasis={isEmbeddingDefault}
+                          />
+                        )}
                       </dl>
 
                       {/* Test result */}
@@ -960,6 +997,7 @@ export default function SettingsPage() {
                             setFormSupportsEmbedding(preset.supportsEmbedding);
                             setFormEmbeddingModel(preset.embeddingModels?.[0]?.value ?? '');
                             setFormEmbeddingDimensions(String(preset.embeddingDimensions ?? 1024));
+                            setFormEmbeddingBaseUrl('');
                           }
                         }
                       }}
@@ -1115,6 +1153,7 @@ export default function SettingsPage() {
                             if (!e.target.checked) {
                               setFormEmbeddingModel('');
                               setFormEmbeddingDimensions('1024');
+                              setFormEmbeddingBaseUrl('');
                             }
                           }}
                           className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
@@ -1180,22 +1219,75 @@ export default function SettingsPage() {
                   </div>
 
                   {formSupportsEmbedding && (
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                        向量维度 <span className="text-slate-400 font-normal">(必须与 pgvector 表一致，当前为 1024)</span>
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        value={formEmbeddingDimensions}
-                        onChange={(e) => setFormEmbeddingDimensions(e.target.value)}
-                        placeholder="1024"
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
-                          bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
-                          placeholder:text-slate-400 focus:outline-none focus:ring-2
-                          focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
-                      />
-                    </div>
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                          向量维度 <span className="text-slate-400 font-normal">(必须与 pgvector 表一致，当前为 1024)</span>
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={formEmbeddingDimensions}
+                          onChange={(e) => setFormEmbeddingDimensions(e.target.value)}
+                          placeholder="1024"
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
+                            bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
+                            placeholder:text-slate-400 focus:outline-none focus:ring-2
+                            focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                          Embedding Base URL <span className="text-slate-400 font-normal">(完整接口地址，可选)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={formEmbeddingBaseUrl}
+                          onChange={(e) => setFormEmbeddingBaseUrl(e.target.value)}
+                          placeholder="例如: https://api.example.com/v1/embeddings"
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
+                            bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
+                            placeholder:text-slate-400 focus:outline-none focus:ring-2
+                            focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
+                        />
+                        <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                          留空时复用 Provider Base URL 的 OpenAI 兼容向量接口。
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                          Embedding API Key{' '}
+                          <span className="text-slate-400 font-normal">
+                            {editingProvider ? '(可选，留空不修改)' : '(可选，留空复用主 API Key)'}
+                          </span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showEmbeddingApiKey ? 'text' : 'password'}
+                            value={formEmbeddingApiKey}
+                            onChange={(e) => setFormEmbeddingApiKey(e.target.value)}
+                            placeholder={editingProvider ? '留空则保持原向量 Key 或继续复用主 Key' : '输入独立向量 Key'}
+                            className="w-full px-4 py-2.5 pr-10 rounded-xl border border-slate-200 dark:border-slate-600
+                              bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
+                              placeholder:text-slate-400 focus:outline-none focus:ring-2
+                              focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowEmbeddingApiKey(!showEmbeddingApiKey)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400
+                              hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                          >
+                            {showEmbeddingApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                          自定义 Embedding 厂商使用不同鉴权时填写；留空则向量化继续使用主 API Key。
+                        </p>
+                      </div>
+                    </>
                   )}
 
                   {/* Temperature */}
@@ -1466,7 +1558,7 @@ export default function SettingsPage() {
       <ConfirmDialog
         open={pendingDefaultEmbeddingProviderId !== null}
         title="设为默认向量服务"
-        message={`确定要将 "${pendingDefaultEmbeddingProviderId ?? ''}" 的向量模型 "${pendingEmbeddingProvider?.embeddingModel ?? ''}"（${pendingEmbeddingProvider?.embeddingDimensions ?? 1024}维）设为知识库默认向量服务吗？后续上传和重新向量化会使用这个向量模型，不会使用聊天模型。`}
+        message={`确定要将 "${pendingDefaultEmbeddingProviderId ?? ''}" 的向量模型 "${pendingEmbeddingProvider?.embeddingModel ?? ''}"（${pendingEmbeddingProvider?.embeddingDimensions ?? 1024}维）设为知识库默认向量服务吗？后续上传和重新向量化会使用 ${pendingEmbeddingProvider?.embeddingBaseUrl ?? 'Provider Base URL 的 OpenAI 兼容向量接口'}，不会使用聊天模型。`}
         confirmText="确认设置"
         cancelText="取消"
         loading={settingEmbeddingDefault}

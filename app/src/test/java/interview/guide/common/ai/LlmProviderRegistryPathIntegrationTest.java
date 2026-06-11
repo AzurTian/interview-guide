@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.model.tool.DefaultToolCallingManager;
 import org.springframework.ai.model.tool.ToolCallingManager;
 
@@ -35,6 +36,7 @@ class LlmProviderRegistryPathIntegrationTest {
 
   private HttpServer server;
   private final List<String> receivedPaths = new CopyOnWriteArrayList<>();
+  private final List<String> receivedAuthorizations = new CopyOnWriteArrayList<>();
   private int port;
 
   @BeforeEach
@@ -42,20 +44,19 @@ class LlmProviderRegistryPathIntegrationTest {
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext("/", exchange -> {
       receivedPaths.add(exchange.getRequestURI().getPath());
+      receivedAuthorizations.add(exchange.getRequestHeaders().getFirst("Authorization"));
       String body = """
-          {
-            "id": "chatcmpl-test",
-            "object": "chat.completion",
-            "created": 0,
-            "model": "test",
-            "choices": [{
-              "index": 0,
-              "message": {"role": "assistant", "content": "ok"},
-              "finish_reason": "stop"
-            }],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
-          }
+          {"id":"chatcmpl-test","object":"chat.completion","created":0,"model":"test",
+          "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+          "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
           """;
+      if (exchange.getRequestURI().getPath().contains("embedding")
+          || exchange.getRequestURI().getPath().contains("embed")) {
+        body = """
+            {"object":"list","data":[{"object":"embedding","embedding":[0.1,0.2,0.3],"index":0}],
+            "model":"test-embedding","usage":{"prompt_tokens":1,"total_tokens":1}}
+            """;
+      }
       byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
       exchange.getResponseHeaders().add("Content-Type", "application/json");
       exchange.sendResponseHeaders(200, bytes.length);
@@ -97,6 +98,35 @@ class LlmProviderRegistryPathIntegrationTest {
     providers.put("probe", config);
     properties.setProviders(providers);
     properties.setDefaultProvider("probe");
+    ToolCallingManager toolCallingManager = DefaultToolCallingManager.builder().build();
+    return new LlmProviderRegistry(properties, toolCallingManager, null, null);
+  }
+
+  private LlmProviderRegistry buildRegistryForEmbedding(String baseUrl, String embeddingBaseUrl) {
+    return buildRegistryForEmbedding(baseUrl, embeddingBaseUrl, null);
+  }
+
+  private LlmProviderRegistry buildRegistryForEmbedding(
+      String baseUrl,
+      String embeddingBaseUrl,
+      String embeddingApiKey
+  ) {
+    LlmProviderProperties properties = new LlmProviderProperties();
+    ProviderConfig config = new ProviderConfig();
+    config.setBaseUrl(baseUrl);
+    config.setApiKey("test-key");
+    config.setEmbeddingApiKey(embeddingApiKey);
+    config.setModel("test-model");
+    config.setEmbeddingModel("test-embedding");
+    config.setEmbeddingDimensions(3);
+    config.setEmbeddingBaseUrl(embeddingBaseUrl);
+    config.setSupportsEmbedding(true);
+    Map<String, ProviderConfig> providers = new HashMap<>();
+    providers.put("probe", config);
+    properties.setProviders(providers);
+    properties.setDefaultProvider("probe");
+    properties.setDefaultEmbeddingProvider("probe");
+    properties.setEmbeddingDimensions(3);
     ToolCallingManager toolCallingManager = DefaultToolCallingManager.builder().build();
     return new LlmProviderRegistry(properties, toolCallingManager, null, null);
   }
@@ -164,5 +194,49 @@ class LlmProviderRegistryPathIntegrationTest {
 
     assertThat(receivedPaths).hasSize(1);
     assertThat(receivedPaths.get(0)).isEqualTo("/v1/messages");
+  }
+
+  @Test
+  @DisplayName("embeddingBaseUrl 指向完整自定义向量接口")
+  void embeddingBaseUrlUsesFullEndpointPath() {
+    LlmProviderRegistry registry = buildRegistryForEmbedding(
+        "http://127.0.0.1:" + port + "/chat/v1",
+        "http://127.0.0.1:" + port + "/custom/embed");
+
+    EmbeddingModel embeddingModel = registry.getEmbeddingModel("probe");
+    embeddingModel.embed("hi");
+
+    assertThat(receivedPaths).hasSize(1);
+    assertThat(receivedPaths.get(0)).isEqualTo("/custom/embed");
+  }
+
+  @Test
+  @DisplayName("未配置 embeddingBaseUrl 时沿用 provider base-url 向量路径")
+  void embeddingBaseUrlFallsBackToProviderBaseUrl() {
+    LlmProviderRegistry registry = buildRegistryForEmbedding(
+        "http://127.0.0.1:" + port + "/compatible-mode/v1",
+        null);
+
+    EmbeddingModel embeddingModel = registry.getEmbeddingModel("probe");
+    embeddingModel.embed("hi");
+
+    assertThat(receivedPaths).hasSize(1);
+    assertThat(receivedPaths.get(0)).isEqualTo("/compatible-mode/v1/embeddings");
+  }
+
+  @Test
+  @DisplayName("配置 embeddingApiKey 时向量请求使用独立鉴权")
+  void embeddingModelUsesEmbeddingApiKeyWhenConfigured() {
+    LlmProviderRegistry registry = buildRegistryForEmbedding(
+        "http://127.0.0.1:" + port + "/chat/v1",
+        "http://127.0.0.1:" + port + "/custom/embed",
+        "embedding-only-key");
+
+    EmbeddingModel embeddingModel = registry.getEmbeddingModel("probe");
+    embeddingModel.embed("hi");
+
+    assertThat(receivedPaths).hasSize(1);
+    assertThat(receivedPaths.get(0)).isEqualTo("/custom/embed");
+    assertThat(receivedAuthorizations).containsExactly("Bearer embedding-only-key");
   }
 }

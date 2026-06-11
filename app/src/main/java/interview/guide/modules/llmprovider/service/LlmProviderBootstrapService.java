@@ -49,6 +49,8 @@ public class LlmProviderBootstrapService {
       }
       ApiKeyEncryptionService.EncryptedValue encrypted =
           encryptionService.encrypt(config.getApiKey() != null ? config.getApiKey() : "");
+      ApiKeyEncryptionService.EncryptedValue encryptedEmbedding =
+          encryptOptional(config.getEmbeddingApiKey());
       boolean supportsEmbedding = Boolean.TRUE.equals(config.getSupportsEmbedding())
           || !isBlank(config.getEmbeddingModel());
 
@@ -61,6 +63,9 @@ public class LlmProviderBootstrapService {
           .apiType(resolveApiType(config.getApiType()))
           .embeddingModel(trimOrNull(config.getEmbeddingModel()))
           .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
+          .embeddingBaseUrl(trimOrNull(config.getEmbeddingBaseUrl()))
+          .embeddingApiKeyNonce(encryptedEmbedding != null ? encryptedEmbedding.nonce() : null)
+          .embeddingApiKeyCiphertext(encryptedEmbedding != null ? encryptedEmbedding.ciphertext() : null)
           .supportsEmbedding(supportsEmbedding)
           .temperature(config.getTemperature())
           .enabled(true)
@@ -102,6 +107,19 @@ public class LlmProviderBootstrapService {
       existing.setApiType(configuredApiType);
       changed = true;
     }
+    String configuredEmbeddingBaseUrl = trimOrNull(config.getEmbeddingBaseUrl());
+    if (configuredEmbeddingBaseUrl != null && isBlank(existing.getEmbeddingBaseUrl())) {
+      existing.setEmbeddingBaseUrl(configuredEmbeddingBaseUrl);
+      changed = true;
+    }
+    String configuredEmbeddingApiKey = trimOrNull(config.getEmbeddingApiKey());
+    if (configuredEmbeddingApiKey != null && isBlank(existing.getEmbeddingApiKeyCiphertext())) {
+      ApiKeyEncryptionService.EncryptedValue encrypted = encryptionService.encrypt(configuredEmbeddingApiKey);
+      existing.setEmbeddingApiKeyNonce(encrypted.nonce());
+      existing.setEmbeddingApiKeyCiphertext(encrypted.ciphertext());
+      changed = true;
+      log.info("Synced embedding API key for builtin provider from configuration: id={}", id);
+    }
 
     String configuredApiKey = trimOrNull(config.getApiKey());
     if (configuredApiKey != null && isBlank(decryptApiKey(existing))) {
@@ -120,6 +138,8 @@ public class LlmProviderBootstrapService {
   private void seedMissingBuiltinProvider(String id, ProviderConfig config) {
     ApiKeyEncryptionService.EncryptedValue encrypted =
         encryptionService.encrypt(config.getApiKey() != null ? config.getApiKey() : "");
+    ApiKeyEncryptionService.EncryptedValue encryptedEmbedding =
+        encryptOptional(config.getEmbeddingApiKey());
     boolean supportsEmbedding = Boolean.TRUE.equals(config.getSupportsEmbedding())
         || !isBlank(config.getEmbeddingModel());
 
@@ -132,6 +152,9 @@ public class LlmProviderBootstrapService {
         .apiType(resolveApiType(config.getApiType()))
         .embeddingModel(trimOrNull(config.getEmbeddingModel()))
         .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
+        .embeddingBaseUrl(trimOrNull(config.getEmbeddingBaseUrl()))
+        .embeddingApiKeyNonce(encryptedEmbedding != null ? encryptedEmbedding.nonce() : null)
+        .embeddingApiKeyCiphertext(encryptedEmbedding != null ? encryptedEmbedding.ciphertext() : null)
         .supportsEmbedding(supportsEmbedding)
         .temperature(config.getTemperature())
         .enabled(true)
@@ -199,6 +222,11 @@ public class LlmProviderBootstrapService {
 
   private String decryptApiKey(LlmProviderEntity provider) {
     return encryptionService.decrypt(provider.getApiKeyNonce(), provider.getApiKeyCiphertext());
+  }
+
+  private ApiKeyEncryptionService.EncryptedValue encryptOptional(String value) {
+    String normalized = trimOrNull(value);
+    return normalized != null ? encryptionService.encrypt(normalized) : null;
   }
 
   private String trimOrNull(String value) {

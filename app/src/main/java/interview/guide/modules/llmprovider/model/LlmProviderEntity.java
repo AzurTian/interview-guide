@@ -50,6 +50,15 @@ public class LlmProviderEntity {
   @Column(name = "embedding_dimensions")
   private Integer embeddingDimensions;
 
+  @Column(name = "embedding_base_url", length = 512)
+  private String embeddingBaseUrl;
+
+  @Column(name = "embedding_api_key_ciphertext", length = 4096)
+  private String embeddingApiKeyCiphertext;
+
+  @Column(name = "embedding_api_key_nonce", length = 64)
+  private String embeddingApiKeyNonce;
+
   @Column(name = "supports_embedding", nullable = false)
   private boolean supportsEmbedding;
 

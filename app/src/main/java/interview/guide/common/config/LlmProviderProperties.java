@@ -29,6 +29,8 @@ public class LlmProviderProperties {
         private ProviderApiType apiType = ProviderApiType.OPENAI_CHAT_COMPLETIONS;
         private String embeddingModel;
         private Integer embeddingDimensions;
+        private String embeddingBaseUrl;
+        private String embeddingApiKey;
         private Boolean supportsEmbedding;
         private Double temperature;
     }

@@ -195,7 +195,7 @@ app:
 
   # RustFS (S3兼容) 存储配置
   storage:
-    endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9001}
+    endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
     access-key: ${APP_STORAGE_ACCESS_KEY:rustfsadmin}
     secret-key: ${APP_STORAGE_SECRET_KEY:rustfsadmin}
     bucket: ${APP_STORAGE_BUCKET:interview-guide}

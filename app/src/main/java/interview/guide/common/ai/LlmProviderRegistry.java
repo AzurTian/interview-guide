@@ -285,11 +285,12 @@ public class LlmProviderRegistry {
                     + config.embeddingModel() + "'" + suffix);
         }
         log.info("[LlmProviderRegistry] Building EmbeddingModel - Provider: {}, BaseUrl: {}, Model: {}",
-            providerId, config.baseUrl(), config.embeddingModel());
+            providerId, resolveEmbeddingBaseUrlForLog(config), config.embeddingModel());
 
-        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(
-            config.baseUrl(),
-            ApiKeySanitizer.requirePresent(config.apiKey(), config.id()));
+        String apiKey = ApiKeySanitizer.requirePresent(config.embeddingApiKey(), config.id());
+        OpenAiApi openAiApi = isBlank(config.embeddingBaseUrl())
+            ? ApiPathResolver.buildOpenAiApi(config.baseUrl(), apiKey)
+            : ApiPathResolver.buildOpenAiEmbeddingApi(config.embeddingBaseUrl(), apiKey);
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
             .model(config.embeddingModel())
             .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
@@ -410,10 +411,12 @@ public class LlmProviderRegistry {
             entity.getId(),
             entity.getBaseUrl(),
             encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext()),
+            decryptEmbeddingApiKeyOrFallback(entity),
             entity.getModel(),
             ProviderApiType.resolve(entity.getApiType()),
             entity.getEmbeddingModel(),
             entity.getEmbeddingDimensions(),
+            entity.getEmbeddingBaseUrl(),
             entity.isSupportsEmbedding(),
             entity.getTemperature()
         );
@@ -431,10 +434,12 @@ public class LlmProviderRegistry {
             providerId,
             config.getBaseUrl(),
             config.getApiKey(),
+            resolveEmbeddingApiKey(config),
             config.getModel(),
             ProviderApiType.resolve(config.getApiType()),
             config.getEmbeddingModel(),
             config.getEmbeddingDimensions(),
+            config.getEmbeddingBaseUrl(),
             supportsEmbedding,
             config.getTemperature()
         );
@@ -442,6 +447,17 @@ public class LlmProviderRegistry {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private String decryptEmbeddingApiKeyOrFallback(LlmProviderEntity entity) {
+        if (isBlank(entity.getEmbeddingApiKeyNonce()) || isBlank(entity.getEmbeddingApiKeyCiphertext())) {
+            return encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext());
+        }
+        return encryptionService.decrypt(entity.getEmbeddingApiKeyNonce(), entity.getEmbeddingApiKeyCiphertext());
+    }
+
+    private String resolveEmbeddingApiKey(ProviderConfig config) {
+        return !isBlank(config.getEmbeddingApiKey()) ? config.getEmbeddingApiKey() : config.getApiKey();
     }
 
     private Integer resolveEmbeddingDimensions(Integer configuredDimensions) {
@@ -461,14 +477,20 @@ public class LlmProviderRegistry {
             || lower.startsWith("ernie");
     }
 
+    private String resolveEmbeddingBaseUrlForLog(ProviderSnapshot config) {
+        return !isBlank(config.embeddingBaseUrl()) ? config.embeddingBaseUrl() : config.baseUrl();
+    }
+
     private record ProviderSnapshot(
         String id,
         String baseUrl,
         String apiKey,
+        String embeddingApiKey,
         String model,
         ProviderApiType apiType,
         String embeddingModel,
         Integer embeddingDimensions,
+        String embeddingBaseUrl,
         boolean supportsEmbedding,
         Double temperature
     ) {

@@ -11,6 +11,8 @@ public record CreateProviderRequest(
     ProviderApiType apiType,
     String embeddingModel,
     Integer embeddingDimensions,
+    String embeddingBaseUrl,
+    String embeddingApiKey,
     Boolean supportsEmbedding,
     Double temperature
 ) {
@@ -22,6 +24,6 @@ public record CreateProviderRequest(
         String embeddingModel,
         Double temperature
     ) {
-        this(id, baseUrl, apiKey, model, null, embeddingModel, null, null, temperature);
+        this(id, baseUrl, apiKey, model, null, embeddingModel, null, null, null, null, temperature);
     }
 }

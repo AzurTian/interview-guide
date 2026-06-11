@@ -248,6 +248,104 @@ class LlmProviderConfigServiceTest {
         }
 
         @Test
+        @DisplayName("createProvider 保存并返回 embeddingBaseUrl")
+        void createProviderStoresEmbeddingBaseUrl() {
+            Map<String, LlmProviderProperties.ProviderConfig> providers = new LinkedHashMap<>();
+            when(properties.getProviders()).thenReturn(providers);
+
+            service.createProvider(new CreateProviderRequest(
+                "custom",
+                "https://chat.example.com/v1",
+                "key",
+                "chat-model",
+                ProviderApiType.OPENAI_CHAT_COMPLETIONS,
+                "embedding-model",
+                1024,
+                " https://embed.example.com/api/v1/embeddings ",
+                null,
+                true,
+                null
+            ));
+
+            assertEquals(
+                "https://embed.example.com/api/v1/embeddings",
+                providers.get("custom").getEmbeddingBaseUrl());
+            assertEquals(
+                "https://embed.example.com/api/v1/embeddings",
+                service.getProvider("custom").embeddingBaseUrl());
+            verify(registry).reload();
+        }
+
+        @Test
+        @DisplayName("createProvider 保存并脱敏返回 embeddingApiKey")
+        void createProviderStoresEmbeddingApiKey() {
+            Map<String, LlmProviderProperties.ProviderConfig> providers = new LinkedHashMap<>();
+            when(properties.getProviders()).thenReturn(providers);
+
+            service.createProvider(new CreateProviderRequest(
+                "custom",
+                "https://chat.example.com/v1",
+                "chat-secret",
+                "chat-model",
+                ProviderApiType.OPENAI_CHAT_COMPLETIONS,
+                "embedding-model",
+                1024,
+                "https://embed.example.com/api/v1/embeddings",
+                " embedding-secret ",
+                true,
+                null
+            ));
+
+            assertEquals("embedding-secret", providers.get("custom").getEmbeddingApiKey());
+            assertEquals("emb***ret", service.getProvider("custom").maskedEmbeddingApiKey());
+            verify(registry).reload();
+        }
+
+        @Test
+        @DisplayName("updateProvider 允许清空 embeddingBaseUrl")
+        void updateProviderAllowsClearingEmbeddingBaseUrl() {
+            Map<String, LlmProviderProperties.ProviderConfig> providers = new LinkedHashMap<>();
+            LlmProviderProperties.ProviderConfig config = createProviderConfig(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "secret",
+                "qwen-plus",
+                "text-embedding-v3"
+            );
+            config.setEmbeddingBaseUrl("https://embed.example.com/v1/embeddings");
+            config.setEmbeddingDimensions(1024);
+            config.setSupportsEmbedding(true);
+            providers.put("dashscope", config);
+            when(properties.getProviders()).thenReturn(providers);
+
+            service.updateProvider("dashscope", new UpdateProviderRequest(
+                null, null, null, null, null, null, "", null, null, null));
+
+            assertNull(config.getEmbeddingBaseUrl());
+            verify(registry).reload();
+        }
+
+        @Test
+        @DisplayName("createProvider 拒绝非法 embeddingBaseUrl")
+        void createProviderRejectsInvalidEmbeddingBaseUrl() {
+            Map<String, LlmProviderProperties.ProviderConfig> providers = new LinkedHashMap<>();
+            when(properties.getProviders()).thenReturn(providers);
+
+            assertThrows(BusinessException.class, () -> service.createProvider(new CreateProviderRequest(
+                "custom",
+                "https://chat.example.com/v1",
+                "key",
+                "chat-model",
+                ProviderApiType.OPENAI_CHAT_COMPLETIONS,
+                "embedding-model",
+                1024,
+                "/relative/embeddings",
+                null,
+                true,
+                null
+            )));
+        }
+
+        @Test
         @DisplayName("updateProvider 拒绝空串 baseUrl / model / apiKey")
         void updateProviderRejectsBlankRequiredFields() {
             Map<String, LlmProviderProperties.ProviderConfig> providers = new LinkedHashMap<>();
